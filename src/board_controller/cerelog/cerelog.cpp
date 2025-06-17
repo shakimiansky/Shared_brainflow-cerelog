@@ -34,21 +34,35 @@ Cerelog_X8::Cerelog_X8(int board_id, struct BrainFlowInputParams params) : Board
 /* This is to configure serial port that Cerelog X8 will use */
 int Cerelog_X8::prepare_session() {
     // add error handling later
-    serial = Serial::create (params.serial_port.c_str(), this);
+    std::string port_path = params.serial_port;
+    
+    #ifdef __APPLE__
+        // On iOS/macOS, serial ports typically start with /dev/
+        if (port_path.find("/dev/") == std::string::npos) {
+            port_path = "/dev/" + port_path;
+        }
+    #endif
+
+    serial = Serial::create(port_path.c_str(), this);
     int response = serial->open_serial_port();
 
     if (response < 0) {
-        return 7;
+        safe_logger(spdlog::level::err, "Failed to open serial port: {}", port_path);
+        return (int)BrainFlowExitCodes::UNABLE_TO_OPEN_PORT_ERROR;
     }
 
-    response = serial->set_serial_port_settings(params.timeout * 1000, false); // this function should be called set_timeout
-    response = serial->set_custom_baudrate(921600);
+    response = serial->set_serial_port_settings(params.timeout * 1000, false);
+    if (response < 0) {
+        safe_logger(spdlog::level::err, "Failed to set serial port settings");
+        return (int)BrainFlowExitCodes::BOARD_WRITE_ERROR;
+    }
 
-    /* std::string sample_rate = "~250";
-    std::string tmp;
-    std::string default_settings = "o";
-    response = config_board(default_settings, tmp);
-    response = config_board(sample_rate, tmp); */   
+    response = serial->set_custom_baudrate(921600);
+    if (response < 0) {
+        safe_logger(spdlog::level::err, "Failed to set baudrate");
+        return (int)BrainFlowExitCodes::BOARD_WRITE_ERROR;
+    }
+
     initialized = true;
     return (int)BrainFlowExitCodes::STATUS_OK;
 }
