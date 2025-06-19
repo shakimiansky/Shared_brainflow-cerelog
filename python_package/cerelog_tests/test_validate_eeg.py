@@ -1,3 +1,4 @@
+import platform
 import numpy as np
 from brainflow.board_shim import BoardShim, BrainFlowInputParams, BoardIds, BrainFlowError, LogLevels
 import time
@@ -37,7 +38,18 @@ def validate_voltage_range(signal: np.ndarray, expected_min: float = -100, expec
 
 def run_validation_tests():
     params = BrainFlowInputParams()
-    params.serial_port = 'COM4'  # Set your port here
+    # Set your port based on OS
+    if platform.system() == 'Windows':
+        params.serial_port = 'COM4' 
+    elif platform.system() == 'Darwin': # MacOS
+        params.serial_port = '/dev/cu.usbserial-110'
+    elif platform.system() == 'Linux': # MacOS
+        params.serial_port = '/dev/ttyUSB0'
+    else:
+        # Fallback, user specifies
+        params.serial_port = input("Enter serial port: ")
+
+    print(f"Using port: {params.serial_port} on {platform.system()}")
     
     test_duration = 3  # seconds
     results = {
@@ -47,46 +59,47 @@ def run_validation_tests():
     }
     
     try:
-        # Initialize board
-        board = BoardShim(BoardIds.CERELOG_X8_BOARD, params)
-        BoardShim.enable_dev_board_logger()
-        BoardShim.set_log_level(LogLevels.LEVEL_DEBUG.value)
+      # Initialize board
+      board = BoardShim(BoardIds.CERELOG_X8_BOARD, params)
+      BoardShim.enable_dev_board_logger()
+      BoardShim.set_log_level(LogLevels.LEVEL_DEBUG.value)
+      BoardShim.set_log_file('test_validate_eeg.log')
         
-        # Get board configuration
-        sample_rate = BoardShim.get_sampling_rate(BoardIds.CERELOG_X8_BOARD)
-        eeg_channels = BoardShim.get_eeg_channels(BoardIds.CERELOG_X8_BOARD)
+      # Get board configuration
+      sample_rate = BoardShim.get_sampling_rate(BoardIds.CERELOG_X8_BOARD)
+      eeg_channels = BoardShim.get_eeg_channels(BoardIds.CERELOG_X8_BOARD)
         
-        print("Starting validation tests...")
-        print(f"Sample rate: {sample_rate} SPS")
-        print(f"EEG Channels: {eeg_channels}")
-        
-        # Prepare and start session
-        board.prepare_session()
-        board.start_stream()
-        print(f"Collecting data for {test_duration} seconds...")
-        
-        time.sleep(test_duration)
-        board.stop_stream()
-        data = board.get_board_data()
-        
-        if data.size == 0:
+      print("Starting validation tests...")
+      print(f"Sample rate: {sample_rate} SPS")
+      print(f"EEG Channels: {eeg_channels}")
+      
+      # Prepare and start session
+      board.prepare_session()
+      board.start_stream()
+      print(f"Collecting data for {test_duration} seconds...")
+      
+      time.sleep(test_duration)
+      board.stop_stream()
+      data = board.get_board_data()
+      
+      if data.size == 0:
             raise ValueError("No data collected during test")
             
-        # 1. RMS Tests
-        print("\n=== RMS Tests ===")
-        for ch in eeg_channels:
+      # 1. RMS Tests
+      print("\n=== RMS Tests ===")
+      for ch in eeg_channels:
             ch_data = data[ch]
             rms = calculate_rms(ch_data)
             results["rms_tests"].append({
-                "channel": ch,
-                "rms_value": rms,
-                "passed": 0.1 <= rms <= 50  # Expected RMS range in microvolts
+                  "channel": ch,
+                  "rms_value": rms,
+                  "passed": 0.1 <= rms <= 50  # Expected RMS range in microvolts
             })
             print(f"Channel {ch} RMS: {rms:.4f} µV")
-        
-        # 2. Voltage Range Tests
-        print("\n=== Voltage Range Tests ===")
-        for ch in eeg_channels:
+            
+            # 2. Voltage Range Tests
+            print("\n=== Voltage Range Tests ===")
+      for ch in eeg_channels:
             ch_data = data[ch]
             passed = validate_voltage_range(ch_data)
             results["voltage_range_tests"].append({
@@ -95,9 +108,9 @@ def run_validation_tests():
             })
             print(f"Channel {ch} voltage range test: {'PASSED' if passed else 'FAILED'}")
         
-        # 3. CMRR Tests
-        print("\n=== CMRR Tests ===")
-        if len(eeg_channels) >= 2:
+      # 3. CMRR Tests
+      print("\n=== CMRR Tests ===")
+      if len(eeg_channels) >= 2:
             signals = [data[ch] for ch in eeg_channels[:2]]  # Use first two channels
             cmrr = calculate_cmrr(signals)
             results["cmrr_tests"].append({
@@ -108,7 +121,7 @@ def run_validation_tests():
             print(f"CMRR between channels {eeg_channels[:2]}: {cmrr:.2f} dB")
         
         # Save results to CSV
-        with open('validation_results.csv', mode='w', newline='') as file:
+      with open('validation_results.csv', mode='w', newline='') as file:
             writer = csv.writer(file)
             writer.writerow(['Test Type', 'Channel', 'Value', 'Passed'])
             
@@ -122,8 +135,8 @@ def run_validation_tests():
                             result['passed']
                         ])
         
-        board.release_session()
-        print("\nValidation tests completed. Results saved to 'validation_results.csv'")
+      board.release_session()
+      print("\nValidation tests completed. Results saved to 'validation_results.csv'")
         
     except BrainFlowError as e:
         print(f"Error during validation: {e}")

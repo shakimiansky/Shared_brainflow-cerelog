@@ -117,9 +117,10 @@ int Cerelog_X8::start_stream (int buffer_size, const char *streamer_params)
     }
 
     // Streaming begins now
-    // res = serial->send_to_serial_port("b\n", 2); // We would switch up this message a bit. We
-    // weren't thinking about a back and forth paradigm for the board but that is the smart way to
-    // do this
+    safe_logger (spdlog::level::debug, "Running send_to_serial_port command");
+    res = serial->send_to_serial_port ("b\n", 2); // We would switch up this message a bit.
+    //     We weren't thinking about a back and forth paradigm for the board but that is the smart
+    //     way to do this
     keep_alive = true;
     streaming_thread = std::thread ([this] { this->read_thread (); }); //
     safe_logger (spdlog::level::debug, "before mutex shit");
@@ -127,7 +128,7 @@ int Cerelog_X8::start_stream (int buffer_size, const char *streamer_params)
     // check for incoming data, wait for 5 seconds
     std::unique_lock<std::mutex> lk (this->m);
     auto sec = std::chrono::seconds (1);
-    bool state_changed = cv.wait_for (lk, 3 * sec,
+    bool state_changed = cv.wait_for (lk, 10 * sec,
 
         [this] ()
         {
@@ -144,7 +145,7 @@ int Cerelog_X8::start_stream (int buffer_size, const char *streamer_params)
     { // how is state_changed being caslculated?
         this->is_streaming = true;
         safe_logger (spdlog::level::debug,
-            "THE STATE OF BOARD HAS CHANEGD FROM TIMEOUT ERROR to " + std::to_string (this->state));
+            "THE STATE OF BOARD HAS CHANGED FROM TIMEOUT ERROR to " + std::to_string (this->state));
         return this->state;
     }
 
@@ -315,9 +316,8 @@ void Cerelog_X8::read_thread ()
             std::this_thread::sleep_for (std::chrono::milliseconds (1));
             continue;
         }
-        safe_logger (spdlog::level::err, "About to read from serial port");
         int res = serial->read_from_serial_port (read_buffer.data () + buffer_len, to_read);
-        safe_logger (spdlog::level::err, "Just read from serial port");
+        safe_logger (spdlog::level::err, "Succesfully read from serial port, res: ", res);
         if (res > 0)
         {
             buffer_len += res;
@@ -341,6 +341,8 @@ void Cerelog_X8::read_thread ()
             if (read_buffer[buffer_pos] == ((START_MARKER >> 8) & 0xFF) &&
                 read_buffer[buffer_pos + 1] == (START_MARKER & 0xFF))
             {
+                safe_logger (spdlog::level::debug, "Found potential start marker at position {}",
+                    buffer_pos);
 
                 // Potential packet found, check end marker
                 int end_idx = buffer_pos + PACKET_IDX_END_MARKER;
@@ -352,7 +354,9 @@ void Cerelog_X8::read_thread ()
                 if (read_buffer[end_idx] != ((END_MARKER >> 8) & 0xFF) ||
                     read_buffer[end_idx + 1] != (END_MARKER & 0xFF))
                 {
-                    safe_logger (spdlog::level::warn, "End marker mismatch in buffer scan");
+                    safe_logger (spdlog::level::warn,
+                        "End marker mismatch: expected 0xDC 0xBA, got 0x{:02X} 0x{:02X}",
+                        read_buffer[end_idx], read_buffer[end_idx + 1]);
                     buffer_pos += 1;
                     continue;
                 }
@@ -413,7 +417,8 @@ void Cerelog_X8::read_thread ()
                 // Parse ADS1299 data (27 bytes, 8 channels, 3 bytes per channel)
                 for (int ch = 0; ch < 8; ch++)
                 {
-                    int idx = PACKET_IDX_ADS1299_DATA + ch * 3; // go to start point in the packet,
+                  // added "+3" to skip status bytes
+                    int idx = PACKET_IDX_ADS1299_DATA + 3 + ch * 3; // go to start point in the packet,
                     if (idx + 2 >= (int)packet.size ())
                     {
                         safe_logger (spdlog::level::err,
@@ -425,10 +430,32 @@ void Cerelog_X8::read_thread ()
                     int32_t value = ((int32_t)packet[idx] << 16) | ((int32_t)packet[idx + 1] << 8) |
                         ((int32_t)packet[idx + 2]);
 
+                    // ADD THIS DEBUG CODE - Only log first few samples to avoid spam
+                    static int debug_sample_count = 0;
+                    if (debug_sample_count < 5 && ch == 0)
+                    { // Only channel 0, first 5 samples
+                        safe_logger (spdlog::level::info,
+                            "Sample #{}, Ch0: raw bytes=[0x{:02X} 0x{:02X} 0x{:02X}], "
+                            "raw_value={}, after_sign_ext={}",
+                            debug_sample_count, packet[idx], packet[idx + 1], packet[idx + 2],
+                            value, value);
+                        debug_sample_count++;
+                    }
+
                     // apply the mask and check JUST for that bit (sign extension baby)
                     if (value & 0b00000000100000000000000000000000)
                     {
                         value = value | 0b11111111000000000000000000000000;
+                    }
+
+                    // More debug for the voltage conversion
+                    if (debug_sample_count <= 5 && ch == 0)
+                    {
+                        int gain = 24;
+                        float vref = 4.5;
+                        double volts = (double)value * ((2.0f * vref / gain) / (1 << 24));
+                        safe_logger (
+                            spdlog::level::info, "Ch0: final_value={}, volts={}", value, volts);
                     }
 
                     // Convert to volts and store in correct channel
@@ -465,6 +492,20 @@ void Cerelog_X8::read_thread ()
                 if (!package.empty () && (int)package.size () == num_rows)
                 {
                     push_package (package.data ());
+
+                    // NEW CODE STARTS HERE - Add packet timing analysis
+                    static auto last_packet_time = std::chrono::steady_clock::now ();
+                    static int packet_count = 0;
+                    packet_count++;
+
+                    auto now = std::chrono::steady_clock::now ();
+                    auto time_diff = std::chrono::duration_cast<std::chrono::milliseconds> (
+                        now - last_packet_time);
+
+                    safe_logger (spdlog::level::info, "Packet #{}: {}ms since last packet",
+                        packet_count, time_diff.count ());
+                    last_packet_time = now;
+                    // NEW CODE ENDS HERE
                 }
                 else
                 {
@@ -473,7 +514,7 @@ void Cerelog_X8::read_thread ()
 
                 // Log every 500 samples: all channels and timestamp
                 sample_counter++;
-                if (sample_counter % 500 == 0)
+                if (sample_counter % 10 == 0)
                 {
                     // Build a string with all channel values and timestamp
                     std::string log_msg = "Sample #" + std::to_string (sample_counter) + " | ";

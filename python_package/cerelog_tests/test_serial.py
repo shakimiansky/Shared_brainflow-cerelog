@@ -4,11 +4,13 @@ Raw Serial Test for Cerelog X8 Board
 Tests direct serial communication without Brainflow layer
 """
 
+import platform
 import serial
 import time
 import sys
 import struct
 from typing import Optional, Tuple
+from brainflow.board_shim import BrainFlowInputParams, BoardShim, BoardIds, LogLevels
 
 # Packet format constants (from your ESP32 code)
 PACKET_TOTAL_SIZE = 37
@@ -116,18 +118,36 @@ def find_packet_boundaries(buffer: bytearray) -> list:
     return positions
 
 def test_serial_connection():
+    params = BrainFlowInputParams()
     """Test raw serial communication with Cerelog board"""
-    port = '/dev/cu.usbserial-110'  # Your Mac port
+        # Set your port based on OS
+    if platform.system() == 'Windows':
+        params.serial_port = 'COM4' 
+    elif platform.system() == 'Darwin': # MacOS
+        params.serial_port = '/dev/cu.usbserial-110'
+    elif platform.system() == 'Linux': # MacOS
+        params.serial_port = '/dev/ttyUSB0'
+    else:
+        # Fallback, user specifies
+        params.serial_port = input("Enter serial port: ")
+
+    print(f"Using port: {params.serial_port} on {platform.system()}")
+
     baud_rate = 115200              # Your current baud rate
     
     print(f"🔌 Testing serial connection to Cerelog X8")
-    print(f"   Port: {port}")
+    print(f"   Port: {params.serial_port}")
     print(f"   Baud: {baud_rate}")
     print(f"   Expected packet size: {PACKET_TOTAL_SIZE} bytes")
     
     try:
+        board = BoardShim(BoardIds.CERELOG_X8_BOARD, params)
+        BoardShim.enable_dev_board_logger()
+        BoardShim.set_log_level(LogLevels.LEVEL_DEBUG.value)
+        BoardShim.set_log_file('test_serial.log')
+        
         # Open serial port
-        ser = serial.Serial(port, baud_rate, timeout=2)
+        ser = serial.Serial(params.serial_port, baud_rate, timeout=2)
         print(f"✓ Opened serial port: {ser.name}")
         
         # Clear buffers
