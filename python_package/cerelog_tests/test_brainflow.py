@@ -13,9 +13,11 @@ def calculate_peak_to_peak(signal):
 
 def test_my_board():
     params = BrainFlowInputParams()
-    params.serial_port = 'COM4'  # Set your port here
+#     params.serial_port = 'COM4'  # Set your port here
+    params.serial_port = '/dev/cu.usbserial-110'
+    params.timeout = 10
 
-    time_len = 10 # seconds
+    time_len = 20 # seconds
     try:
         board = BoardShim(BoardIds.CERELOG_X8_BOARD, params)
         BoardShim.enable_dev_board_logger()
