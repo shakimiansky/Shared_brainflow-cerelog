@@ -13,22 +13,11 @@ def calculate_peak_to_peak(signal):
     return np.max(signal) - np.min(signal)
 
 def test_my_board():
-    params = BrainFlowInputParams()
-    # Set your port based on OS
-    if platform.system() == 'Windows':
-        params.serial_port = 'COM4' 
-    elif platform.system() == 'Darwin': # MacOS
-        params.serial_port = '/dev/cu.usbserial-110'
-    elif platform.system() == 'Linux': # MacOS
-        params.serial_port = '/dev/ttyUSB0'
-    else:
-        # Fallback, user specifies
-        params.serial_port = input("Enter serial port: ")
-
-    print(f"Using port: {params.serial_port} on {platform.system()}")
+    params = BrainFlowInputParams()    
+    print(f"Using port scanning on {platform.system()} (will auto-detect port)")
     
     params.timeout = 5
-    time_len =10 # seconds
+    time_len = 10 # seconds
     try:
         board = BoardShim(BoardIds.CERELOG_X8_BOARD, params)
         BoardShim.enable_dev_board_logger()

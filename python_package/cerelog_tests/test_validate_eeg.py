@@ -38,18 +38,9 @@ def validate_voltage_range(signal: np.ndarray, expected_min: float = -100, expec
 
 def run_validation_tests():
     params = BrainFlowInputParams()
-    # Set your port based on OS
-    if platform.system() == 'Windows':
-        params.serial_port = 'COM4' 
-    elif platform.system() == 'Darwin': # MacOS
-        params.serial_port = '/dev/cu.usbserial-110'
-    elif platform.system() == 'Linux': # MacOS
-        params.serial_port = '/dev/ttyUSB0'
-    else:
-        # Fallback, user specifies
-        params.serial_port = input("Enter serial port: ")
-
-    print(f"Using port: {params.serial_port} on {platform.system()}")
+    
+    # Port scanning will automatically detect the correct port
+    print(f"Using port scanning on {platform.system()}")
     
     test_duration = 3  # seconds
     results = {

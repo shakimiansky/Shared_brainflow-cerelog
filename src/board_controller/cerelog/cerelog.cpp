@@ -1,14 +1,31 @@
 #include "cerelog.h"
 #include <ctime>
 #include <stdint.h>
+#include "serial.h"
+#include "os_serial.h"
 
 #ifndef _WIN32
 #include <errno.h>
 #endif
 
+struct PortInfo {std::string os; std::string default_port; int baudrate;};
+PortInfo get_port_info() {
+    // TODO: Add port scanning logic 
+    #ifdef _WIN32
+        return {"Windows", "COM4", 921600}; // TODO: Add baudrate
+    #elif __APPLE__
+        return {"Darwin", "/dev/cu.usbserial-110", 230400}; // TODO: Add baudrate
+    #elif __linux__
+        return {"Linux", "/dev/ttyACM0", 921600}; // TODO: Add baudrate
+    #else
+        return {"Unknown", "Unknown", 921600}; // TODO: Add baudrate
+    #endif
+}
+
 // Constructor
 Cerelog_X8::Cerelog_X8 (int board_id, struct BrainFlowInputParams params) : Board (board_id, params)
 {
+
     serial = NULL;
     is_streaming = false;
     keep_alive = false;
@@ -35,37 +52,35 @@ Cerelog_X8::Cerelog_X8 (int board_id, struct BrainFlowInputParams params) : Boar
 /* This is to configure serial port that Cerelog X8 will use */
 int Cerelog_X8::prepare_session ()
 {
-    // add error handling later
-    std::string port_path = params.serial_port;
-
-#ifdef __APPLE__
-    // On iOS/macOS, serial ports typically start with /dev/
-    if (port_path.find ("/dev/") == std::string::npos)
-    {
-        port_path = "/dev/" + port_path;
+    // Get OS-specific port if none provided
+    std::string port_path;
+    auto info = get_port_info();
+    if (params.serial_port.empty()) {
+        // PORT SCANNING: Automatically detect available serial ports for the device
+        port_path = scan_for_device_port();  // Use port scanning instead of default
+        safe_logger(spdlog::level::info, "Using scanned port for {}: {}", info.os, port_path);
+    } else {
+        port_path = params.serial_port;
+        safe_logger(spdlog::level::info, "Using user-specified port: {}", port_path);
     }
-#endif
 
-    serial = Serial::create (port_path.c_str (), this);
+    // Open serial port - create OSSerial directly
+    serial = new OSSerial (port_path.c_str ());
     int response = serial->open_serial_port ();
-
-    if (response < 0)
-    {
+    if (response < 0) {
         safe_logger (spdlog::level::err, "Failed to open serial port: {}", port_path);
         return (int)BrainFlowExitCodes::UNABLE_TO_OPEN_PORT_ERROR;
     }
 
+    // Set timeout and baudrate
     response = serial->set_serial_port_settings (params.timeout * 2000, false);
-    if (response < 0)
-    {
+    if (response < 0) {
         safe_logger (spdlog::level::err, "Failed to set serial port settings");
         return (int)BrainFlowExitCodes::BOARD_WRITE_ERROR;
     }
-
-    response = serial->set_custom_baudrate (115200);
-    if (response < 0)
-    {
-        safe_logger (spdlog::level::err, "Failed to set baudrate");
+    response = serial->set_custom_baudrate (info.baudrate);
+    if (response < 0) {
+        safe_logger (spdlog::level::err, "Failed to set baudrate to {} for {}", info.baudrate, info.os);
         return (int)BrainFlowExitCodes::BOARD_WRITE_ERROR;
     }
 
@@ -83,7 +98,7 @@ int Cerelog_X8::config_board (std::string config, std::string &response)
     // configured though? Looks like our arduino setup is not sufficient
 }
 
-/* This function seems a bit unnecessary for Cerelog since we start barragging with data anyway
+/* This function seems a bit unnecessary for Cerelog since we start barraging with data anyway
    This function is also going to enable timestamp syncing??
    This function CALLS READ_THREAD */
 int Cerelog_X8::start_stream (int buffer_size, const char *streamer_params)
@@ -285,6 +300,9 @@ void Cerelog_X8::read_thread ()
 
     // Counter for logging every 1000 samples
     size_t sample_counter = 0;
+    
+    // Control logging frequency - change this number to log more/less frequently
+    const int LOG_FREQUENCY = 500;
 
     while (keep_alive)
     {
@@ -316,8 +334,9 @@ void Cerelog_X8::read_thread ()
             std::this_thread::sleep_for (std::chrono::milliseconds (1));
             continue;
         }
+
+        // TODO Conditional for serial library, baud rate, sample frequency, etc.?
         int res = serial->read_from_serial_port (read_buffer.data () + buffer_len, to_read);
-        safe_logger (spdlog::level::err, "Succesfully read from serial port, res: ", res);
         if (res > 0)
         {
             buffer_len += res;
@@ -341,8 +360,10 @@ void Cerelog_X8::read_thread ()
             if (read_buffer[buffer_pos] == ((START_MARKER >> 8) & 0xFF) &&
                 read_buffer[buffer_pos + 1] == (START_MARKER & 0xFF))
             {
-                safe_logger (spdlog::level::debug, "Found potential start marker at position {}",
-                    buffer_pos);
+                if (sample_counter % LOG_FREQUENCY == 0) {
+                    safe_logger (spdlog::level::debug, "Found potential start marker at position {}",
+                        buffer_pos);
+                }
 
                 // Potential packet found, check end marker
                 int end_idx = buffer_pos + PACKET_IDX_END_MARKER;
@@ -354,9 +375,11 @@ void Cerelog_X8::read_thread ()
                 if (read_buffer[end_idx] != ((END_MARKER >> 8) & 0xFF) ||
                     read_buffer[end_idx + 1] != (END_MARKER & 0xFF))
                 {
-                    safe_logger (spdlog::level::warn,
-                        "End marker mismatch: expected 0xDC 0xBA, got 0x{:02X} 0x{:02X}",
-                        read_buffer[end_idx], read_buffer[end_idx + 1]);
+                    if (sample_counter % LOG_FREQUENCY == 0) {
+                        safe_logger (spdlog::level::warn,
+                            "End marker mismatch: expected 0xDC 0xBA, got 0x{:02X} 0x{:02X}",
+                            read_buffer[end_idx], read_buffer[end_idx + 1]);
+                    }
                     buffer_pos += 1;
                     continue;
                 }
@@ -417,8 +440,9 @@ void Cerelog_X8::read_thread ()
                 // Parse ADS1299 data (27 bytes, 8 channels, 3 bytes per channel)
                 for (int ch = 0; ch < 8; ch++)
                 {
-                  // added "+3" to skip status bytes
-                    int idx = PACKET_IDX_ADS1299_DATA + 3 + ch * 3; // go to start point in the packet,
+                    // added "+3" to skip status bytes
+                    int idx =
+                        PACKET_IDX_ADS1299_DATA + 3 + ch * 3; // go to start point in the packet,
                     if (idx + 2 >= (int)packet.size ())
                     {
                         safe_logger (spdlog::level::err,
@@ -432,7 +456,7 @@ void Cerelog_X8::read_thread ()
 
                     // ADD THIS DEBUG CODE - Only log first few samples to avoid spam
                     static int debug_sample_count = 0;
-                    if (debug_sample_count < 5 && ch == 0)
+                    if (sample_counter % LOG_FREQUENCY == 0 && debug_sample_count < 5 && ch == 0)
                     { // Only channel 0, first 5 samples
                         safe_logger (spdlog::level::info,
                             "Sample #{}, Ch0: raw bytes=[0x{:02X} 0x{:02X} 0x{:02X}], "
@@ -449,7 +473,7 @@ void Cerelog_X8::read_thread ()
                     }
 
                     // More debug for the voltage conversion
-                    if (debug_sample_count <= 5 && ch == 0)
+                    if (sample_counter % LOG_FREQUENCY == 0 && debug_sample_count <= 5 && ch == 0)
                     {
                         int gain = 24;
                         float vref = 4.5;
@@ -493,7 +517,7 @@ void Cerelog_X8::read_thread ()
                 {
                     push_package (package.data ());
 
-                    // NEW CODE STARTS HERE - Add packet timing analysis
+                    // Add packet timing analysis
                     static auto last_packet_time = std::chrono::steady_clock::now ();
                     static int packet_count = 0;
                     packet_count++;
@@ -502,10 +526,11 @@ void Cerelog_X8::read_thread ()
                     auto time_diff = std::chrono::duration_cast<std::chrono::milliseconds> (
                         now - last_packet_time);
 
-                    safe_logger (spdlog::level::info, "Packet #{}: {}ms since last packet",
-                        packet_count, time_diff.count ());
+                    if (sample_counter % LOG_FREQUENCY == 0) {
+                        safe_logger (spdlog::level::info, "Packet #{}: {}ms since last packet",
+                            packet_count, time_diff.count ());
+                    }
                     last_packet_time = now;
-                    // NEW CODE ENDS HERE
                 }
                 else
                 {
@@ -514,7 +539,7 @@ void Cerelog_X8::read_thread ()
 
                 // Log every 500 samples: all channels and timestamp
                 sample_counter++;
-                if (sample_counter % 10 == 0)
+                if (sample_counter % LOG_FREQUENCY == 0)
                 {
                     // Build a string with all channel values and timestamp
                     std::string log_msg = "Sample #" + std::to_string (sample_counter) + " | ";
@@ -651,9 +676,66 @@ double Cerelog_X8::convert_counter_to_timestamp (uint64_t packet_counter)
 uint8_t Cerelog_X8::calculate_checksum (const uint8_t *data, size_t length)
 {
     uint8_t checksum = 0;
-    for (size_t i = 0; i < length; ++i)
+    for (size_t i = 0; i < length; i++)
     {
         checksum += data[i];
     }
     return checksum;
+}
+
+// Port scanning function implementation
+std::string Cerelog_X8::scan_for_device_port() {
+    std::string os = get_port_info().os;
+    std::vector<std::string> ports_to_try;
+    
+    if (os == "Windows") {
+        // Try COM ports 1-20
+        for (int i = 1; i <= 20; i++) {
+            ports_to_try.push_back("COM" + std::to_string(i));
+        }
+    } else if (os == "Darwin") {
+        // Try common macOS USB serial patterns
+        ports_to_try = {
+            "/dev/cu.usbserial-110",
+            "/dev/cu.usbserial-111", 
+            "/dev/cu.usbserial-112",
+            "/dev/cu.usbserial-10",
+            "/dev/cu.usbserial-11",
+            "/dev/cu.usbserial-12",
+            "/dev/cu.usbserial-210",
+            "/dev/cu.usbserial-211",
+            "/dev/cu.usbserial-212",
+            "/dev/tty.usbserial-110",
+            "/dev/tty.usbserial-111",
+            "/dev/tty.usbserial-112",
+            "/dev/tty.usbserial-210",
+            "/dev/tty.usbserial-211",
+            "/dev/tty.usbserial-212"
+        };
+    } else if (os == "Linux") {
+        // Try common Linux USB serial patterns
+        ports_to_try = {
+            "/dev/ttyUSB0",
+            "/dev/ttyUSB1", 
+            "/dev/ttyUSB2",
+            "/dev/ttyACM0",
+            "/dev/ttyACM1",
+            "/dev/ttyACM2"
+        };
+    }
+    
+    // Try to open each port
+    for (const auto& port : ports_to_try) {
+        OSSerial test_serial(port.c_str());
+        int result = test_serial.open_serial_port();
+        if (result >= 0) {
+            test_serial.close_serial_port();
+            safe_logger(spdlog::level::info, "Found available port: {}", port);
+            return port;
+        }
+    }
+    
+    // If no ports found, return default
+    safe_logger(spdlog::level::warn, "No available ports found, using default");
+    return get_port_info().default_port;
 }
