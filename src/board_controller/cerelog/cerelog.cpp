@@ -8,18 +8,31 @@
 #include <errno.h>
 #endif
 
-struct PortInfo {std::string os; std::string default_port; int baudrate;};
+// Simplified port info - only OS detection and baud rate needed
+struct PortInfo {
+    std::string os; 
+    int baudrate;
+};
+
 PortInfo get_port_info() {
-    // TODO: Add port scanning logic 
+    PortInfo info;
+    
+    // OS detection
     #ifdef _WIN32
-        return {"Windows", "COM4", 921600}; // TODO: Add baudrate
-    #elif __APPLE__
-        return {"Darwin", "/dev/cu.usbserial-110", 230400}; // TODO: Add baudrate
-    #elif __linux__
-        return {"Linux", "/dev/ttyACM0", 921600}; // TODO: Add baudrate
+        info.os = "Windows";
+        info.baudrate = 921600;
+    #elif defined(__APPLE__)
+        info.os = "Darwin";
+        info.baudrate = 230400;
+    #elif defined(__linux__)
+        info.os = "Linux";
+        info.baudrate = 921600;
     #else
-        return {"Unknown", "Unknown", 921600}; // TODO: Add baudrate
+        info.os = "Unknown";
+        info.baudrate = 115200;
     #endif
+    
+    return info;
 }
 
 // Constructor
@@ -737,5 +750,15 @@ std::string Cerelog_X8::scan_for_device_port() {
     
     // If no ports found, return default
     safe_logger(spdlog::level::warn, "No available ports found, using default");
-    return get_port_info().default_port;
+    
+    // Return OS-specific default port as fallback
+    if (os == "Windows") {
+        return "COM4";
+    } else if (os == "Darwin") {
+        return "/dev/cu.usbserial-110";
+    } else if (os == "Linux") {
+        return "/dev/ttyUSB0";
+    } else {
+        return "/dev/ttyUSB0"; // Generic fallback
+    }
 }
