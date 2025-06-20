@@ -305,12 +305,6 @@ void Cerelog_X8::read_thread ()
     int buffer_pos = 0;
     int buffer_len = 0;
 
-    // For timestamp sync
-    double last_board_timestamp = 0;
-    double last_system_time = 0;
-    double timestamp_offset = 0;
-    bool timestamp_synced = false;
-
     // Counter for logging every 1000 samples
     size_t sample_counter = 0;
     
@@ -413,7 +407,7 @@ void Cerelog_X8::read_thread ()
                 // Copy packet to local buffer for parsing
                 std::memcpy (packet.data (), read_buffer.data () + buffer_pos, PACKET_TOTAL_SIZE);
 
-                // Parse timestamp (4 bytes, big endian)
+                // Parse timestamp (4 bytes, big endian) - now contains Unix timestamp
                 if (PACKET_IDX_TIMESTAMP + 3 >= (int)packet.size ())
                 {
                     safe_logger (spdlog::level::err, "Packet too short for timestamp");
@@ -426,29 +420,19 @@ void Cerelog_X8::read_thread ()
                 board_timestamp |= (uint32_t)packet[PACKET_IDX_TIMESTAMP + 2] << 8;
                 board_timestamp |= (uint32_t)packet[PACKET_IDX_TIMESTAMP + 3];
 
-                // Timestamp sync logic (BrainFlow style)
-                double system_time = time (nullptr);
-                if (!timestamp_synced)
-                {
-                    // On first valid packet, sync offset
-                    timestamp_offset = system_time - (double)board_timestamp;
-                    timestamp_synced = true;
-                    last_board_timestamp = (double)board_timestamp;
-                    last_system_time = system_time;
+                // Use board timestamp directly (it's now a Unix timestamp)
+                double synced_timestamp = (double)board_timestamp;
+                
+                // Log timestamp info for debugging (first few packets only) - use fixed-point formatting
+                static int timestamp_debug_count = 0;
+                if (timestamp_debug_count < 5) {
+                    double system_time = time(nullptr);
+                    safe_logger(spdlog::level::info, 
+                        "Packet #{}: board_timestamp={:.0f}, system_time={:.0f}, diff={:.0f}s", 
+                        timestamp_debug_count, synced_timestamp, system_time, 
+                        system_time - synced_timestamp);
+                    timestamp_debug_count++;
                 }
-                else
-                {
-                    // If board timestamp jumps, resync
-                    if (std::abs ((double)board_timestamp - last_board_timestamp) > 10000)
-                    {
-                        timestamp_offset = system_time - (double)board_timestamp;
-                        safe_logger (
-                            spdlog::level::warn, "Timestamp jump detected, resyncing offset");
-                    }
-                    last_board_timestamp = (double)board_timestamp;
-                    last_system_time = system_time;
-                }
-                double synced_timestamp = (double)board_timestamp + timestamp_offset;
 
                 // Parse ADS1299 data (27 bytes, 8 channels, 3 bytes per channel)
                 for (int ch = 0; ch < 8; ch++)
