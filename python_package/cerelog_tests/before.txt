@@ -1,4 +1,0 @@
-/dev/cu.BenBeauBose
-/dev/cu.Bluetooth-Incoming-Port
-/dev/cu.debug-console
-/dev/cu.usbserial-110
