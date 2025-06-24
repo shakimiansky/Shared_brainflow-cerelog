@@ -12,7 +12,7 @@ import struct
 from typing import Optional, Tuple
 from brainflow.board_shim import BrainFlowInputParams, BoardShim, BoardIds, LogLevels
 
-# Packet format constants (from your ESP32 code)
+# Packet format constants (from ESP32 code)
 PACKET_TOTAL_SIZE = 37
 START_MARKER = 0xABCD  # 2 bytes
 END_MARKER = 0xDCBA    # 2 bytes
@@ -104,7 +104,7 @@ class PacketParser:
             print(f"Total processed:  {total:4d}")
 
 def find_packet_boundaries(buffer: bytearray) -> list:
-    """Find potential packet start positions in buffer"""
+    """Find packet start position in buffer"""
     positions = []
     start_bytes = struct.pack('>H', START_MARKER)
     
@@ -119,25 +119,24 @@ def find_packet_boundaries(buffer: bytearray) -> list:
 
 def test_serial_connection():
     """Test raw serial communication with Cerelog board"""
-    # This test does raw serial communication, not BrainFlow
-    # Set port based on OS for direct serial access
+    # Set port and baud rate based on OS for direct serial access
+    # TODO add port scanning like in cerelog.cpp
     if platform.system() == 'Windows':
         port_name = 'COM4' 
+        baud_rate = 921600
     elif platform.system() == 'Darwin': # MacOS
-        port_name = '/dev/cu.usbserial-10'  # Use the working port we found
-    elif platform.system() == 'Linux': # Linux
+        port_name = '/dev/cu.usbserial-10'
+        baud_rate = 230400
+    elif platform.system() == 'Linux': 
         port_name = '/dev/ttyUSB0'
+        baud_rate = 921600
     else:
         # Fallback, user specifies
         port_name = input("Enter serial port: ")
-
-    print(f"Using port: {port_name} on {platform.system()}")
-
-    baud_rate = 115200              # Your current baud rate
-    
+        baud_rate = input("Enter baud rate: ")
+        
     print(f"🔌 Testing serial connection to Cerelog X8")
-    print(f"   Port: {port_name}")
-    print(f"   Baud: {baud_rate}")
+    print(f"   Using port: {port_name} on {platform.system()} at {baud_rate}")
     print(f"   Expected packet size: {PACKET_TOTAL_SIZE} bytes")
     
     try:
@@ -164,7 +163,6 @@ def test_serial_connection():
                 
                 # Process complete packets
                 while len(buffer) >= PACKET_TOTAL_SIZE:
-                    # Look for packet boundaries
                     boundaries = find_packet_boundaries(buffer)
                     
                     if not boundaries:
@@ -188,7 +186,7 @@ def test_serial_connection():
                         packet = parser.parse_packet(packet_data)
                         if packet:
                             # Print occasional packet info
-                            if parser.valid_packets % 100 == 1:  # Every 100th packet
+                            if parser.valid_packets % 500 == 1:
                                 print(f"\n📦 Packet #{parser.valid_packets}")
                                 print(f"   Timestamp: {packet['timestamp']}")
                                 print(f"   Channels: {[f'{ch:.6f}V' for ch in packet['channels'][:4]]}...")
@@ -213,7 +211,7 @@ def test_serial_connection():
         elapsed = time.time() - start_time
         if parser.valid_packets > 0:
             rate = parser.valid_packets / elapsed
-            expected_rate = 500  # Your ESP32 sampling rate
+            expected_rate = 500  # ESP32 sampling rate
             print(f"\n📈 Performance:")
             print(f"   Actual rate:   {rate:.1f} packets/sec")
             print(f"   Expected rate: {expected_rate} packets/sec")
