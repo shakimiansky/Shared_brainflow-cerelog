@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Test Unix timestamp functionality for Cerelog X8
-This test will show the difference between old incrementing timestamps and new Unix timestamps
+This test shows the difference between incremental and Unix timestamps
 """
 
 import sys
@@ -11,7 +11,7 @@ import platform
 import re
 from datetime import datetime
 
-# Add the parent directory to the path to import brainflow
+# Add the parent directory to the path to import Brainflow
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from brainflow.board_shim import BoardShim, BrainFlowInputParams, BoardIds, LogLevels
@@ -30,7 +30,7 @@ def analyze_timestamp_logs(log_file):
         r"Packet #(\d+): board_timestamp=([\d.]+), system_time=([\d.]+), diff=([-\d.]+)s",
         r"Using scanned port for (\w+): (.+)",
         r"Found available port: (.+)",
-        r"Sample #(\d+).*ch(\d+)=([\d.-]+).*ch(\d+)=([\d.-]+)"  # Timestamp channel data
+        r"Sample #(\d+).*ch(\d+)=([\d.-]+).*ch(\d+)=([\d.-]+)"  # Timestamp channel data (RegEx)
     ]
     
     found_timestamps = []
