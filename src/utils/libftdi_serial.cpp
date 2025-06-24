@@ -1,7 +1,6 @@
 #include "libftdi_serial.h"
 #include "serial.h"
 
-
 #ifdef USE_LIBFTDI
 #include <chrono>
 #include <ftdi.h>

@@ -1,3 +1,4 @@
+import platform
 import time
 import numpy as np
 from brainflow.board_shim import BoardShim, BrainFlowInputParams, BoardIds, BrainFlowError, LogLevels
@@ -12,15 +13,16 @@ def calculate_peak_to_peak(signal):
     return np.max(signal) - np.min(signal)
 
 def test_my_board():
-    params = BrainFlowInputParams()
-    params.serial_port = 'COM4'  # Set your port here
-
+    params = BrainFlowInputParams()    
+    print(f"Using port scanning on {platform.system()} (will auto-detect port)")
+    
+    params.timeout = 5
     time_len = 10 # seconds
     try:
         board = BoardShim(BoardIds.CERELOG_X8_BOARD, params)
         BoardShim.enable_dev_board_logger()
         BoardShim.set_log_level(LogLevels.LEVEL_DEBUG.value)
-        BoardShim.set_log_file('test_1.log')
+        BoardShim.set_log_file('test_brainflow.log')
         sample_rate = BoardShim.get_sampling_rate(BoardIds.CERELOG_X8_BOARD)
         eeg_channels = BoardShim.get_eeg_channels(BoardIds.CERELOG_X8_BOARD)
         print(f"Sample rate  : {sample_rate} SPS")
