@@ -1,5 +1,5 @@
 #include "cerelog.h"
-#include "os_serial.h" // replacing FTDI
+#include "os_serial.h" // replaced FTDI
 #include "serial.h"    // OSSerial needs Serial class to compile properly
 #include <ctime>
 #include <stdint.h>
@@ -24,8 +24,8 @@ PortInfo get_port_info ()
     info.os = "Windows";
     info.baudrate = 921600;
 #elif defined(__APPLE__)
-    info.os = "Darwin"; // MacOS
-    info.baudrate = 230400;
+    info.os = "Darwin";   // MacOS
+    info.baudrate = 9600; // 230400;
 #elif defined(__linux__)
     info.os = "Linux";
     info.baudrate = 921600; // TODO needs verification
@@ -101,7 +101,8 @@ int Cerelog_X8::prepare_session ()
     }
 
     // Set other serial settings
-    response = serial->set_serial_port_settings (params.timeout * 3000, false); // 3 second timeout
+    response = serial->set_serial_port_settings (
+        params.timeout * 3000, false); // timeout (params.timeout times 3 seconds)
     if (response < 0)
     {
         safe_logger (spdlog::level::err, "Timed out - failed to set serial port settings");
@@ -135,6 +136,70 @@ int Cerelog_X8::config_board (std::string config, std::string &response)
         We have to build a big list of configurables. How do we ensure that the board is ready to be
         configured though? Looks like our Arduino setup is not sufficient
     */
+}
+
+
+/* This function sends a timestamp handshake packet to the Arduino
+ * Format: [0xAB][0xCD][0x02][timestamp][timestamp][timestamp][timestamp][reg_addr][reg_val][checksum][0xDC][0xBA]
+ */
+int Cerelog_X8::send_timestamp_handshake()
+{
+    if (!initialized || !serial) {
+        safe_logger(spdlog::level::err, "Serial not initialized for timestamp handshake");
+        return (int)BrainFlowExitCodes::BOARD_NOT_CREATED_ERROR;
+    }
+
+    // Create 12-byte handshake packet
+    uint8_t handshake_packet[12];
+    
+    // Start marker: 0xAB 0xCD
+    handshake_packet[0] = 0xAB;
+    handshake_packet[1] = 0xCD;
+    
+    // Message type: 0x02 (timestamp)
+    handshake_packet[2] = 0x02;
+    
+    // Current Unix timestamp (4 bytes, big endian)
+    uint32_t current_timestamp = (uint32_t)time(nullptr);
+    handshake_packet[3] = (current_timestamp >> 24) & 0xFF;
+    handshake_packet[4] = (current_timestamp >> 16) & 0xFF;
+    handshake_packet[5] = (current_timestamp >> 8) & 0xFF;
+    handshake_packet[6] = current_timestamp & 0xFF;
+    
+    // Register address and value (can be used for configuration)
+    handshake_packet[7] = 0x00; // reg_addr (0x00 = no special config)
+    handshake_packet[8] = 0x00; // reg_val
+    
+    // Calculate checksum (sum of bytes 2-8)
+    uint8_t checksum = 0;
+    for (int i = 2; i <= 8; i++) {
+        checksum += handshake_packet[i];
+    }
+    handshake_packet[9] = checksum;
+    
+    // End marker: 0xDC 0xBA
+    handshake_packet[10] = 0xDC;
+    handshake_packet[11] = 0xBA;
+    
+    // Send handshake packet
+    int res = serial->send_to_serial_port(handshake_packet, 12);
+    if (res < 0) {
+        safe_logger(spdlog::level::err, "Failed to send timestamp handshake");
+        return (int)BrainFlowExitCodes::BOARD_WRITE_ERROR;
+    }
+    
+    safe_logger(spdlog::level::info, "Sent timestamp handshake with timestamp: {}", current_timestamp);
+    
+    // Wait for "OK" response from Arduino
+    unsigned char response[3];
+    res = serial->read_from_serial_port(response, 3);
+    if (res == 3 && response[0] == 'O' && response[1] == 'K' && response[2] == '\n') {
+        safe_logger(spdlog::level::info, "Timestamp handshake successful");
+        return (int)BrainFlowExitCodes::STATUS_OK;
+    } else {
+        safe_logger(spdlog::level::warn, "No valid response to timestamp handshake");
+        return (int)BrainFlowExitCodes::SYNC_TIMEOUT_ERROR;
+    }
 }
 
 
@@ -173,6 +238,12 @@ int Cerelog_X8::start_stream (int buffer_size, const char *streamer_params)
     if (res != (int)BrainFlowExitCodes::STATUS_OK)
     {
         return res;
+    }
+
+    // Send timestamp handshake before starting stream
+    res = send_timestamp_handshake();
+    if (res != (int)BrainFlowExitCodes::STATUS_OK) {
+        safe_logger(spdlog::level::warn, "Timestamp handshake failed, continuing anyway");
     }
 
     // Streaming begins now
@@ -219,52 +290,6 @@ int Cerelog_X8::start_stream (int buffer_size, const char *streamer_params)
             streaming_thread.join (); // Wait for thread to finish
         }
         this->is_streaming = false; // Ensure streaming flag is false
-        return (int)BrainFlowExitCodes::SYNC_TIMEOUT_ERROR;
-    }
-}
-
-
-/* Function sends the current system time through a handshake */
-int Cerelog_X8::send_timestamp_handshake() 
-{
-    // Get system time or set fallback
-    std::time_t current_time = std::time(nullptr);
-    if (current_time < 1600000000) 
-    {
-        current_time = 1500000000; // if system time is before ~2020, use July 2017 as fallback
-        safe_logger(spdlog::level::warn, "System clock appears incorrect, using fallback timestamp");
-    }
-    uint32_t unix_timestamp = static_cast<uint32_t>(current_time); // TODO
-
-    // Build timestamp packet 
-    unsigned char packet[11]; // 11 bytes: [start_marker][msg_type][timestamp][timestamp][timestamp][timestamp][checksum][end_marker]
-    packet[0] = 0xAB; // start marker byte 1
-    packet[1] = 0xCD; // start marker byte 2
-    packet[2] = 0x02; // message type
-    packet[3] = unix_timestamp >> 24 & 0xFF; // timestamp MSB
-    packet[4] = unix_timestamp >> 16 & 0xFF; // timestamp second byte
-    packet[5] = unix_timestamp >> 8 & 0xFF; // timestamp third byte
-    packet[6] = unix_timestamp & 0xFF; // timestamp LSB
-    packet[7] = packet[7] = packet[3] + packet[4] + packet[5] + packet[6]; // checksum 
-    packet[8] = 0xDC; // end marker byte 1 
-    packet[9] = 0xBA; // end marker byte 2
-
-    // Send packet and wait for "OK" response
-    int result = serial->send_to_serial_port(reinterpret_cast<const char*>(packet), 11);
-    if (result < 0) 
-    {
-        safe_logger(spdlog::level::err, "Failed to send timestamp packet");
-        return (int)BrainFlowExitCodes::BOARD_WRITE_ERROR;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(500)); // wait 0.5 seconds
-    char response[10];
-    int bytes_read = serial->read_from_serial_port(response, sizeof(response));
-    if (bytes_read >= 2 && response[0] == 'O' && response[1] == 'K')
-    {
-        safe_logger(spdlog::level::info, "Timestamp handshake successful: {}", unix_timestamp);
-        return (int)BrainFlowExitCodes::STATUS_OK;
-    } else {
-        safe_logger(spdlog::level::err, "No OK response received from ESP32 :(", unix_timestamp);
         return (int)BrainFlowExitCodes::SYNC_TIMEOUT_ERROR;
     }
 }

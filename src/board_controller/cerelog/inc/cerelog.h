@@ -25,11 +25,11 @@ private:
     int sync_count = 0;
     bool sync_established = false;
     int sampling_rate = 500;
-    int send_timestamp_handshake ();
+    int send_timestamp_handshake();
 
-    void read_thread ();
-    double convert_counter_to_timestamp (uint64_t packet_counter);
-    std::string scan_for_device_port ();
+    void read_thread();
+    double convert_counter_to_timestamp(uint64_t packet_counter);
+    std::string scan_for_device_port();
 
 public:
     Cerelog_X8 (int board_id, struct BrainFlowInputParams params);
