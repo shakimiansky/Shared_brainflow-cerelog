@@ -125,7 +125,7 @@ def test_serial_connection():
         port_name = 'COM4' 
         baud_rate = 921600
     elif platform.system() == 'Darwin': # MacOS
-        port_name = '/dev/cu.usbserial-10'
+        port_name = '/dev/cu.usbserial-210'
         baud_rate = 230400
     elif platform.system() == 'Linux': 
         port_name = '/dev/ttyUSB0'
@@ -133,7 +133,7 @@ def test_serial_connection():
     else:
         # Fallback, user specifies
         port_name = input("Enter serial port: ")
-        baud_rate = input("Enter baud rate: ")
+        baud_rate = int(input("Enter baud rate: "))
         
     print(f"🔌 Testing serial connection to Cerelog X8")
     print(f"   Using port: {port_name} on {platform.system()} at {baud_rate}")

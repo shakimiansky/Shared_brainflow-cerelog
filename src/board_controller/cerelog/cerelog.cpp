@@ -25,7 +25,7 @@ PortInfo get_port_info ()
     info.baudrate = 921600;
 #elif defined(__APPLE__)
     info.os = "Darwin";   // MacOS
-    info.baudrate = 9600; // 230400;
+    info.baudrate = 230400;
 #elif defined(__linux__)
     info.os = "Linux";
     info.baudrate = 921600; // TODO needs verification
@@ -139,70 +139,6 @@ int Cerelog_X8::config_board (std::string config, std::string &response)
 }
 
 
-/* This function sends a timestamp handshake packet to the Arduino
- * Format: [0xAB][0xCD][0x02][timestamp][timestamp][timestamp][timestamp][reg_addr][reg_val][checksum][0xDC][0xBA]
- */
-int Cerelog_X8::send_timestamp_handshake()
-{
-    if (!initialized || !serial) {
-        safe_logger(spdlog::level::err, "Serial not initialized for timestamp handshake");
-        return (int)BrainFlowExitCodes::BOARD_NOT_CREATED_ERROR;
-    }
-
-    // Create 12-byte handshake packet
-    uint8_t handshake_packet[12];
-    
-    // Start marker: 0xAB 0xCD
-    handshake_packet[0] = 0xAB;
-    handshake_packet[1] = 0xCD;
-    
-    // Message type: 0x02 (timestamp)
-    handshake_packet[2] = 0x02;
-    
-    // Current Unix timestamp (4 bytes, big endian)
-    uint32_t current_timestamp = (uint32_t)time(nullptr);
-    handshake_packet[3] = (current_timestamp >> 24) & 0xFF;
-    handshake_packet[4] = (current_timestamp >> 16) & 0xFF;
-    handshake_packet[5] = (current_timestamp >> 8) & 0xFF;
-    handshake_packet[6] = current_timestamp & 0xFF;
-    
-    // Register address and value (can be used for configuration)
-    handshake_packet[7] = 0x00; // reg_addr (0x00 = no special config)
-    handshake_packet[8] = 0x00; // reg_val
-    
-    // Calculate checksum (sum of bytes 2-8)
-    uint8_t checksum = 0;
-    for (int i = 2; i <= 8; i++) {
-        checksum += handshake_packet[i];
-    }
-    handshake_packet[9] = checksum;
-    
-    // End marker: 0xDC 0xBA
-    handshake_packet[10] = 0xDC;
-    handshake_packet[11] = 0xBA;
-    
-    // Send handshake packet
-    int res = serial->send_to_serial_port(handshake_packet, 12);
-    if (res < 0) {
-        safe_logger(spdlog::level::err, "Failed to send timestamp handshake");
-        return (int)BrainFlowExitCodes::BOARD_WRITE_ERROR;
-    }
-    
-    safe_logger(spdlog::level::info, "Sent timestamp handshake with timestamp: {}", current_timestamp);
-    
-    // Wait for "OK" response from Arduino
-    unsigned char response[3];
-    res = serial->read_from_serial_port(response, 3);
-    if (res == 3 && response[0] == 'O' && response[1] == 'K' && response[2] == '\n') {
-        safe_logger(spdlog::level::info, "Timestamp handshake successful");
-        return (int)BrainFlowExitCodes::STATUS_OK;
-    } else {
-        safe_logger(spdlog::level::warn, "No valid response to timestamp handshake");
-        return (int)BrainFlowExitCodes::SYNC_TIMEOUT_ERROR;
-    }
-}
-
-
 /* TODO Notes
     This function seems a bit unnecessary for Cerelog since we start barraging with data anyway
     This function is also going to enable timestamp syncing?
@@ -220,41 +156,17 @@ int Cerelog_X8::start_stream (int buffer_size, const char *streamer_params)
         return (int)BrainFlowExitCodes::STREAM_ALREADY_RUN_ERROR;
     }
 
-    /* TODO
-        auto syncTimestamp = []() {
-            std::string resp;
-            for (int i = 0; i < 3; i++) {
-                Implement the following
-                int res = calc_time(resp);
-                if (res != (int)BrainFlowExitCodes::STATUS_OK) {
-                    return res;
-                }
-            }
-        };
-    */
-
     int res = prepare_for_acquisition (buffer_size, streamer_params); // this is BrainFlow command
-    // TODO Check often that the board is ready to do this
     if (res != (int)BrainFlowExitCodes::STATUS_OK)
     {
         return res;
     }
-
-    // Send timestamp handshake before starting stream
-    res = send_timestamp_handshake();
-    if (res != (int)BrainFlowExitCodes::STATUS_OK) {
-        safe_logger(spdlog::level::warn, "Timestamp handshake failed, continuing anyway");
-    }
-
+    // Give Arduino time to reset after serial connection
+    std::this_thread::sleep_for (std::chrono::milliseconds (1000)); // 1 second delay
+    
     // Streaming begins now
-    safe_logger (
-        spdlog::level::debug, "Starting streaming with serial->send_to_serial_port command");
+    safe_logger (spdlog::level::debug, "Starting streaming with serial->send_to_serial_port command");
     res = serial->send_to_serial_port ("b\n", 2);
-    /* TODO Notes
-        Build in alternate b\n commands if error
-        We weren't thinking about a back and forth paradigm for the board but that is the smart way
-        to do this
-    */
     keep_alive = true;
     streaming_thread = std::thread ([this] { this->read_thread (); });
 
@@ -292,6 +204,99 @@ int Cerelog_X8::start_stream (int buffer_size, const char *streamer_params)
         this->is_streaming = false; // Ensure streaming flag is false
         return (int)BrainFlowExitCodes::SYNC_TIMEOUT_ERROR;
     }
+}
+
+
+/* Function sends the current system time through a handshake */
+int Cerelog_X8::send_timestamp_handshake ()
+{
+    // Get system time or set fallback
+    std::time_t current_time = std::time (nullptr);
+    if (current_time < 1600000000)
+    {
+        current_time = 1500000000; // if system time is before ~2020, use July 2017 as fallback
+        safe_logger (
+            spdlog::level::warn, "System clock appears incorrect, using fallback timestamp");
+    }
+    uint32_t unix_timestamp = static_cast<uint32_t> (current_time);
+
+    // Build timestamp packet
+    // [start_marker][msg_type][timestamp][timestamp][timestamp][timestamp][RegAddr][RegVal][checksum][end_marker]
+    unsigned char packet[12];
+    packet[0] = 0xAB;                        // start marker byte 1
+    packet[1] = 0xCD;                        // start marker byte 2
+    packet[2] = 0x02;                        // message type
+    packet[3] = unix_timestamp >> 24 & 0xFF; // timestamp MSB
+    packet[4] = unix_timestamp >> 16 & 0xFF; // timestamp second byte
+    packet[5] = unix_timestamp >> 8 & 0xFF;  // timestamp third byte
+    packet[6] = unix_timestamp & 0xFF;       // timestamp LSB
+    packet[7] = 0x00;                        // reg_addr                                    //
+    packet[8] = 0x00;                        // regVal                                   //
+    packet[9] = packet[2] + packet[3] + packet[4] + packet[5] + packet[6] + packet[7] + packet[8]; // checksum
+    packet[10] = 0xDC;                                         // end marker byte 1
+    packet[11] = 0xBA;                                         // end marker byte 2
+
+    // DEBUG: print handshake packet bytes
+    std::string packet_hex;
+    for (int i = 0; i < 12; ++i) {
+        char buf[6];
+        snprintf(buf, sizeof(buf), "%02X ", packet[i]);
+        packet_hex += buf;
+    }
+    safe_logger(spdlog::level::info, "Sending handshake packet: {}", packet_hex);
+
+    // Send packet and wait for "OK" response
+    int result = serial->send_to_serial_port (reinterpret_cast<const char *> (packet), 12);
+    if (result < 0)
+    {
+        safe_logger (spdlog::level::err, "Failed to send timestamp packet");
+        return (int)BrainFlowExitCodes::BOARD_WRITE_ERROR;
+    }
+    std::this_thread::sleep_for (std::chrono::milliseconds (2000)); // wait 2 seconds
+    
+    // Wait for OK response or any valid data packet
+    safe_logger (spdlog::level::debug, "Waiting for handshake response...");
+    unsigned char response[50]; // Read more bytes to catch full data packets
+    int bytes_read = serial->read_from_serial_port (response, 50); // Read up to 50 bytes
+    
+    if (bytes_read > 0) {
+        safe_logger (spdlog::level::info, "Received handshake response ({} bytes): {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X}", 
+            bytes_read, response[0], response[1], response[2], response[3], response[4], 
+            response[5], response[6], response[7], response[8], response[9]);
+        
+        // Check if it's "OK" response
+        if (bytes_read >= 2 && response[0] == 'O' && response[1] == 'K') {
+            safe_logger (spdlog::level::info, "Received OK response from ESP32");
+            return (int)BrainFlowExitCodes::STATUS_OK;
+        }
+        
+        // Check if it's a valid data packet (starts with 0xAB 0xCD) anywhere in the response
+        for (int i = 0; i < bytes_read - 1; i++) {
+            if (response[i] == 0xAB && response[i+1] == 0xCD) {
+                safe_logger (spdlog::level::info, "Found valid data packet pattern at position {} - handshake successful!", i);
+                return (int)BrainFlowExitCodes::STATUS_OK;
+            }
+        }
+        
+        // Check if it's zeros (device not ready yet)
+        bool all_zeros = true;
+        for (int i = 0; i < bytes_read; i++) {
+            if (response[i] != 0x00) {
+                all_zeros = false;
+                break;
+            }
+        }
+        
+        if (all_zeros) {
+            safe_logger (spdlog::level::warn, "Received all zeros - device may not be ready yet");
+        } else {
+            safe_logger (spdlog::level::warn, "Received response but not OK or valid data packet");
+        }
+    } else {
+        safe_logger (spdlog::level::err, "No response received from ESP32");
+    }
+    
+    return (int)BrainFlowExitCodes::SYNC_TIMEOUT_ERROR;
 }
 
 
@@ -410,10 +415,6 @@ void Cerelog_X8::read_thread ()
     // TODO still needed?
     size_t sample_counter = 0;
 
-    // Control logging frequency
-    // TODO idk if this is necessary, I thought this showed up somewhere else
-    const int LOG_FREQUENCY = 500;
-
     while (keep_alive)
     {
         // Shift any leftover bytes to the start of the buffer
@@ -476,6 +477,19 @@ void Cerelog_X8::read_thread ()
                         "Found potential start marker at position {}", buffer_pos);
                 }
 
+                // Check checksum
+                uint8_t checksum = 0;
+                for (int i = PACKET_IDX_LENGTH; i < PACKET_IDX_CHECKSUM; i++)
+                {
+                    checksum += read_buffer[buffer_pos + i];
+                }
+                if (read_buffer[buffer_pos + PACKET_IDX_CHECKSUM] != checksum)
+                {
+                    safe_logger (spdlog::level::warn, "Checksum mismatch in buffer scan");
+                    buffer_pos += 1;
+                    continue;
+                }
+
                 // Potential packet found, check end marker
                 int end_idx = buffer_pos + PACKET_IDX_END_MARKER;
                 if (end_idx + 1 >= buffer_len)
@@ -487,23 +501,8 @@ void Cerelog_X8::read_thread ()
                 {
                     if (sample_counter % LOG_FREQUENCY == 0)
                     {
-                        safe_logger (spdlog::level::warn,
-                            "End marker mismatch: expected 0xDC 0xBA, got 0x{:02X} 0x{:02X}",
-                            read_buffer[end_idx], read_buffer[end_idx + 1]);
+                        safe_logger (spdlog::level::warn, "End marker mismatch in buffer scan");
                     }
-                    buffer_pos += 1;
-                    continue;
-                }
-
-                // Check checksum
-                uint8_t checksum = 0;
-                for (int i = PACKET_IDX_LENGTH; i < PACKET_IDX_CHECKSUM; i++)
-                {
-                    checksum += read_buffer[buffer_pos + i];
-                }
-                if (read_buffer[buffer_pos + PACKET_IDX_CHECKSUM] != checksum)
-                {
-                    safe_logger (spdlog::level::warn, "Checksum mismatch in buffer scan");
                     buffer_pos += 1;
                     continue;
                 }

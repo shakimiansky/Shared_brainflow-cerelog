@@ -41,8 +41,6 @@ def test_my_board():
         data = board.get_board_data()
 
         print(f"Data shape: {data.shape}")
-        #print("First few data points:")
-        #print(data[:5, :10] if data.size > 0 else "No data collected")
         print(f"✓ Got {data.shape[1]} samples")
 
         # Calculate RMS for each EEG channel

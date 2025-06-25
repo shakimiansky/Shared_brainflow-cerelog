@@ -42,7 +42,7 @@ def run_validation_tests():
     # Port scanning will automatically detect the correct port
     print(f"Using port scanning on {platform.system()}")
     
-    test_duration = 3  # seconds
+    test_duration = 5  # seconds
     results = {
         "rms_tests": [],
         "voltage_range_tests": [],
@@ -76,7 +76,7 @@ def run_validation_tests():
       if data.size == 0:
             raise ValueError("No data collected during test")
             
-      # 1. RMS Tests
+    # 1. RMS Tests
       print("\n=== RMS Tests ===")
       for ch in eeg_channels:
             ch_data = data[ch]
@@ -88,7 +88,7 @@ def run_validation_tests():
             })
             print(f"Channel {ch} RMS: {rms:.4f} µV")
             
-            # 2. Voltage Range Tests
+    # 2. Voltage Range Tests
             print("\n=== Voltage Range Tests ===")
       for ch in eeg_channels:
             ch_data = data[ch]
@@ -99,7 +99,7 @@ def run_validation_tests():
             })
             print(f"Channel {ch} voltage range test: {'PASSED' if passed else 'FAILED'}")
         
-      # 3. CMRR Tests
+    # 3. CMRR Tests
       print("\n=== CMRR Tests ===")
       if len(eeg_channels) >= 2:
             signals = [data[ch] for ch in eeg_channels[:2]]  # Use first two channels
