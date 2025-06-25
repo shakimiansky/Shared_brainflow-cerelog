@@ -13,15 +13,16 @@ struct PortInfo
 {
     std::string os;
     int baudrate;
+    int default_baudrate;
 };
 PortInfo get_port_info ()
 {
     PortInfo info;
+    info.default_baudrate = 9600;
 // OS detection
 #ifdef _WIN32
     info.os = "Windows";
-    info.baudrate =
-        230400 // SHOULD BE 921600, hardcoded as 230400 so it works with current firmware;
+    info.baudrate = 921600;
 #elif defined(__APPLE__)
     info.os = "Darwin"; // MacOS
     info.baudrate = 230400;
@@ -32,7 +33,7 @@ PortInfo get_port_info ()
     info.os = "Unknown";
     info.baudrate = 115200; // TODO set to lowest common denominator OR prompt manual input
 #endif
-        return info;
+    return info;
 }
 
 /* Constructor */
@@ -90,7 +91,16 @@ int Cerelog_X8::prepare_session ()
         return (int)BrainFlowExitCodes::UNABLE_TO_OPEN_PORT_ERROR;
     }
 
-    // Set timeout
+    // Set default baud rate for handshake
+    response = serial->set_custom_baudrate (info.default_baudrate);
+    if (response < 0)
+    {
+        safe_logger (
+            spdlog::level::err, "Failed to set default baudrate: {}", info.default_baudrate);
+        return (int)BrainFlowExitCodes::BOARD_WRITE_ERROR;
+    }
+
+    // Set other serial settings
     response = serial->set_serial_port_settings (params.timeout * 3000, false); // 3 second timeout
     if (response < 0)
     {
@@ -98,14 +108,16 @@ int Cerelog_X8::prepare_session ()
         return (int)BrainFlowExitCodes::BOARD_WRITE_ERROR;
     }
 
-    // Set baud rate
-    response = serial->set_custom_baudrate (info.baudrate);
-    if (response < 0)
+    // Send timestamp handshake to board
+    response = send_timestamp_handshake ();
+    if (response != (int)BrainFlowExitCodes::STATUS_OK)
     {
         safe_logger (
-            spdlog::level::err, "Failed to set baudrate to {} for {} OS", info.baudrate, info.os);
-        return (int)BrainFlowExitCodes::BOARD_WRITE_ERROR;
+            spdlog::level::warn, "Timestamp handshake failed, continuing with fallback time");
     }
+
+    // TODO upgrade to target baudrate here
+
 
     // Successfully prepared session
     initialized = true;
@@ -121,7 +133,7 @@ int Cerelog_X8::config_board (std::string config, std::string &response)
     /* TODO Notes:
         Are we sending serial messages back in? Are we sending TCP messages in?
         We have to build a big list of configurables. How do we ensure that the board is ready to be
-       configured though? Looks like our Arduino setup is not sufficient
+        configured though? Looks like our Arduino setup is not sufficient
     */
 }
 
@@ -170,7 +182,7 @@ int Cerelog_X8::start_stream (int buffer_size, const char *streamer_params)
     /* TODO Notes
         Build in alternate b\n commands if error
         We weren't thinking about a back and forth paradigm for the board but that is the smart way
-       to do this
+        to do this
     */
     keep_alive = true;
     streaming_thread = std::thread ([this] { this->read_thread (); });
