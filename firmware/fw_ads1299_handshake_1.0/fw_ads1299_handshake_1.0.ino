@@ -93,6 +93,7 @@ byte SPI_SendByte(byte data_byte, bool cont);
 void read_ADS1299_data(byte *buffer);
 void IRAM_ATTR onDRDYFalling(void);
 void print_all_ADS1299_registers_from_setup(void);
+uint32_t get_baud_rate_from_config(uint8_t config_val);
 
 // --- Register Setup ---
 /* Data Structure for controlling registers */
@@ -156,9 +157,25 @@ bool waitForTimestamp() { // from BrainFlow
         uint8_t reg_addr = Serial.read();
         uint8_t reg_val = Serial.read();
 
-        // Use parameters
-        if (reg_addr != 0x00) {
-            // Apply register settings
+        // Baud rate configuration
+        if (reg_addr == 0x01) { // baud rate register
+            uint32_t new_baud_rate = get_baud_rate_from_config(reg_val);
+            if (new_baud_rate > 0) {
+                DEBUG_PRINT("Current baud rate: ");
+                DEBUG_PRINTLN(Serial.baudRate());
+                DEBUG_PRINT("Switching to baud rate: ");
+                DEBUG_PRINTLN(new_baud_rate);
+                Serial.flush(); // Wait for all data to be transmitted
+                delay(100);
+                Serial.begin(new_baud_rate);
+                delay(2000);
+                DEBUG_PRINT("Baud rate successfully switched to: ");
+                DEBUG_PRINTLN(Serial.baudRate());
+            } else {
+                DEBUG_PRINTLN("Invalid baud rate configuration");
+            }
+        } else if (reg_addr != 0x00) {
+            // Apply other register settings
             DEBUG_PRINT("User parameter received: ");
             DEBUG_PRINTLN(reg_addr);
         }
@@ -173,6 +190,8 @@ bool waitForTimestamp() { // from BrainFlow
         _millis_reference = millis();
         _timestamp_initialized = true;
         Serial.write("OK");
+        Serial.flush(); // Ensure 'OK' is transmitted before switching baud rate
+        delay(100); // time to read 'OK' before switching baud rate
         DEBUG_PRINT("Received timestamp: ");
         DEBUG_PRINTLN(received_timestamp);
         return true;
@@ -217,8 +236,8 @@ void ADS1299_WREG(uint8_t regAdd, uint8_t *values, uint8_t numRegs){
 
     for (uint8_t i = 0; i < numRegs; i++) {
         SPI_SendByte(values[i], true);
-        // DEBUG_PRINT("Register value sent: ");
-        // DEBUG_PRINTLN(0b0000000100000000 + values[i], BIN);
+        DEBUG_PRINT("Register value sent: ");
+        DEBUG_PRINTLN(0b0000000100000000 + values[i], BIN);
     }
     digitalWrite(pin_CS_NUM, HIGH);
     _ADS1299_PREV_CMD = _CMD_ADC_WREG;
@@ -240,8 +259,8 @@ void ADS1299_RREG(uint8_t regAdd, uint8_t *buffer, uint8_t numRegs) {
     SPI_SendByte(0b00100000 | regAdd, true);
     // delayMicroseconds(2);
     SPI_SendByte(numRegs - 1, true);
-    // DEBUG_PRINT("Reg Add: ");
-    // DEBUG_PRINTLN(0b0000000100000000 + regAdd, BIN);
+    DEBUG_PRINT("Reg Add: ");
+    DEBUG_PRINTLN(0b0000000100000000 + regAdd, BIN);
     DEBUG_PRINT("Actual byte sent over to indicate register address: ");
     DEBUG_PRINTLN(0b0000000100000000 + (0b01000000 | regAdd), BIN);
     // delayMicroseconds(2);
@@ -349,8 +368,17 @@ void print_all_ADS1299_registers_from_setup(void) {
 // SETUP FUNCTION
 void setup() {
     // --- Serial Initialization ---
-    Serial.begin (9600); // default baud rate
-
+    Serial.begin(9600);
+    
+    #ifdef DEBUG_ENABLED
+        Serial.println("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+        Serial.println("!!! WARNING: DEBUG MODE ENABLED - INCOMING DATA WILL BE CORRUPTED AND TESTS WILL FAIL !!!");
+        Serial.println("!!! REMEMBER TO DISABLE DEBUG MODE BEFORE UPLOADING TO PRODUCTION !!!");
+        Serial.println("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+        Serial.println("Message will self-destruct in 5 seconds...");
+        delay(5000);
+    #endif
+    
     /* GPIO Configuration */
     pinMode(pin_PWDN_NUM, OUTPUT);
     pinMode(pin_RST_NUM, OUTPUT);
@@ -491,5 +519,19 @@ void loop() {
           // Send entire packet over Serial
           Serial.write(packet, sizeof(packet));
         }
+    }
+}
+
+uint32_t get_baud_rate_from_config(uint8_t config_val) {
+    switch (config_val) {
+        case 0x00: return 9600;    // default
+        case 0x01: return 19200;
+        case 0x02: return 38400; 
+        case 0x03: return 57600;
+        case 0x04: return 115200;  // fallback?
+        case 0x05: return 230400;  // MacOS limit
+        case 0x06: return 460800;
+        case 0x07: return 921600;  // Windows limit
+        default: return 0;         // Invalid config
     }
 }

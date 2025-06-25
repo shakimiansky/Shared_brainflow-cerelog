@@ -25,7 +25,8 @@ private:
     int sync_count = 0;
     bool sync_established = false;
     int sampling_rate = 500;
-    int send_timestamp_handshake ();
+    int send_timestamp_handshake (uint8_t reg_addr = 0x00, uint8_t reg_val = 0x00);
+    int get_baud_rate_from_config (uint8_t config_val);
 
     void read_thread ();
     double convert_counter_to_timestamp (uint64_t packet_counter);

@@ -36,6 +36,8 @@ PortInfo get_port_info ()
     return info;
 }
 
+constexpr int LOG_FREQUENCY = 1000; // Log every 1000 samples
+
 /* Constructor */
 Cerelog_X8::Cerelog_X8 (int board_id, struct BrainFlowInputParams params) : Board (board_id, params)
 {
@@ -109,16 +111,38 @@ int Cerelog_X8::prepare_session ()
         return (int)BrainFlowExitCodes::BOARD_WRITE_ERROR;
     }
 
-    // Send timestamp handshake to board
-    response = send_timestamp_handshake ();
+    // Send timestamp handshake to board with baud rate configuration
+    // reg_addr = 0x01 for baud rate configuration, reg_val = baud rate index
+    uint8_t baud_config = 0x04; // 115200
+    if (info.baudrate == 230400) baud_config = 0x05;      // 230400
+    else if (info.baudrate == 460800) baud_config = 0x06; // 460800
+    else if (info.baudrate == 921600) baud_config = 0x07; // 921600
+    
+    response = send_timestamp_handshake (0x01, baud_config);
     if (response != (int)BrainFlowExitCodes::STATUS_OK)
     {
         safe_logger (
             spdlog::level::warn, "Timestamp handshake failed, continuing with fallback time");
     }
 
-    // TODO upgrade to target baudrate here
-
+    // Switch to target baud rate for data streaming
+    safe_logger (spdlog::level::info, "Switching to target baud rate: {}", info.baudrate);
+    response = serial->set_custom_baudrate (info.baudrate);
+    if (response < 0)
+    {
+        safe_logger (
+            spdlog::level::warn, "Failed to switch to target baudrate: {}, continuing with default: {}", info.baudrate, info.default_baudrate);
+    } else {
+        safe_logger (spdlog::level::info, "Successfully switched to target baud rate: {} on OS: {}", info.baudrate, info.os);
+        
+        // Flush serial buffer to clear partial packets after baud rate switch
+        std::this_thread::sleep_for (std::chrono::milliseconds (500)); // Wait for buffer to settle
+        unsigned char flush_buffer[1000];
+        int flush_result = serial->read_from_serial_port (flush_buffer, sizeof(flush_buffer));
+        if (flush_result > 0) {
+            safe_logger (spdlog::level::debug, "Flushed {} bytes from serial buffer after baud rate switch", flush_result);
+        }
+    }
 
     // Successfully prepared session
     initialized = true;
@@ -130,12 +154,9 @@ int Cerelog_X8::prepare_session ()
  * them */
 int Cerelog_X8::config_board (std::string config, std::string &response)
 {
-    return 2;
-    /* TODO Notes:
-        Are we sending serial messages back in? Are we sending TCP messages in?
-        We have to build a big list of configurables. How do we ensure that the board is ready to be
-        configured though? Looks like our Arduino setup is not sufficient
-    */
+    // Simple baud rateconfiguration
+    response = "Configuration not supported in current implementation. Using automatic baud rate switching.";
+    return (int)BrainFlowExitCodes::INVALID_ARGUMENTS_ERROR;
 }
 
 
@@ -207,8 +228,8 @@ int Cerelog_X8::start_stream (int buffer_size, const char *streamer_params)
 }
 
 
-/* Function sends the current system time through a handshake */
-int Cerelog_X8::send_timestamp_handshake ()
+/* Function sends the current system time through a handshake with optional configuration */
+int Cerelog_X8::send_timestamp_handshake (uint8_t reg_addr, uint8_t reg_val)
 {
     // Get system time or set fallback
     std::time_t current_time = std::time (nullptr);
@@ -230,11 +251,11 @@ int Cerelog_X8::send_timestamp_handshake ()
     packet[4] = unix_timestamp >> 16 & 0xFF; // timestamp second byte
     packet[5] = unix_timestamp >> 8 & 0xFF;  // timestamp third byte
     packet[6] = unix_timestamp & 0xFF;       // timestamp LSB
-    packet[7] = 0x00;                        // reg_addr                                    //
-    packet[8] = 0x00;                        // regVal                                   //
+    packet[7] = reg_addr;                    // configuration register address
+    packet[8] = reg_val;                     // configuration register value
     packet[9] = packet[2] + packet[3] + packet[4] + packet[5] + packet[6] + packet[7] + packet[8]; // checksum
-    packet[10] = 0xDC;                                         // end marker byte 1
-    packet[11] = 0xBA;                                         // end marker byte 2
+    packet[10] = 0xDC;                       // end marker byte 1
+    packet[11] = 0xBA;                       // end marker byte 2
 
     // DEBUG: print handshake packet bytes
     std::string packet_hex;
@@ -858,5 +879,22 @@ std::string Cerelog_X8::scan_for_device_port ()
     else
     {
         return "/dev/ttyUSB0"; // Generic fallback
+    }
+}
+
+/* Function to convert config value to baud rate */
+int Cerelog_X8::get_baud_rate_from_config (uint8_t config_val)
+{
+    switch (config_val) {
+        case 0x00: return 9600; // default
+        case 0x01: return 19200;
+        case 0x02: return 38400; 
+        case 0x03: return 57600;
+        case 0x04: return 115200; 
+        case 0x05: return 230400; // MacOS limit
+        case 0x06: return 460800;
+        case 0x07: return 921600; // Windows limit
+        default: return -1; // Invalid config
+        // TODO: add error message and Linux / fallback limits
     }
 }

@@ -63,6 +63,11 @@ def main():
             "name": "Unix Timestamp Test", 
             "file": "test_unix_timestamps.py",
             "description": "Tests timestamp synchronization between Arduino and BrainFlow"
+        },
+        {
+            "name": "Baud Rate Switch Test",
+            "file": "test_baud_rate_switch.py",
+            "description": "Tests dynamic baud rate configuration and handshake switching"
         }
     ]
     
@@ -113,7 +118,7 @@ def main():
         print("  ⚠️  Multiple tests failed. Review the integration setup.")
     
     print(f"\n📁 Log files generated:")
-    log_files = ["test_brainflow.log", "test_unix_timestamps.log", "test_validate_eeg.log"]
+    log_files = ["test_serial.log", "test_brainflow.log", "test_unix_timestamps.log", "test_validate_eeg.log"]
     for log_file in log_files:
         if os.path.exists(log_file):
             size = os.path.getsize(log_file) / 1024  # KB
