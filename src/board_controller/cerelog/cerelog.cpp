@@ -224,8 +224,51 @@ int Cerelog_X8::start_stream (int buffer_size, const char *streamer_params)
 }
 
 
-// BUFFERING IS THE ISSUE?? THE MORE COMPLICATED THE BEGINNING OF READING THOSE BYTES BECAME, THE
-// MORE DIFFICULT EVERYTHING ELSE BECAME
+/* Function sends the current system time through a handshake */
+int Cerelog_X8::send_timestamp_handshake() 
+{
+    // Get system time or set fallback
+    std::time_t current_time = std::time(nullptr);
+    if (current_time < 1600000000) 
+    {
+        current_time = 1500000000; // if system time is before ~2020, use July 2017 as fallback
+        safe_logger(spdlog::level::warn, "System clock appears incorrect, using fallback timestamp");
+    }
+    uint32_t unix_timestamp = static_cast<uint32_t>(current_time); // TODO
+
+    // Build timestamp packet 
+    unsigned char packet[11]; // 11 bytes: [start_marker][msg_type][timestamp][timestamp][timestamp][timestamp][checksum][end_marker]
+    packet[0] = 0xAB; // start marker byte 1
+    packet[1] = 0xCD; // start marker byte 2
+    packet[2] = 0x02; // message type
+    packet[3] = unix_timestamp >> 24 & 0xFF; // timestamp MSB
+    packet[4] = unix_timestamp >> 16 & 0xFF; // timestamp second byte
+    packet[5] = unix_timestamp >> 8 & 0xFF; // timestamp third byte
+    packet[6] = unix_timestamp & 0xFF; // timestamp LSB
+    packet[7] = packet[7] = packet[3] + packet[4] + packet[5] + packet[6]; // checksum 
+    packet[8] = 0xDC; // end marker byte 1 
+    packet[9] = 0xBA; // end marker byte 2
+
+    // Send packet and wait for "OK" response
+    int result = serial->send_to_serial_port(reinterpret_cast<const char*>(packet), 11);
+    if (result < 0) 
+    {
+        safe_logger(spdlog::level::err, "Failed to send timestamp packet");
+        return (int)BrainFlowExitCodes::BOARD_WRITE_ERROR;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(500)); // wait 0.5 seconds
+    char response[10];
+    int bytes_read = serial->read_from_serial_port(response, sizeof(response));
+    if (bytes_read >= 2 && response[0] == 'O' && response[1] == 'K')
+    {
+        safe_logger(spdlog::level::info, "Timestamp handshake successful: {}", unix_timestamp);
+        return (int)BrainFlowExitCodes::STATUS_OK;
+    } else {
+        safe_logger(spdlog::level::err, "No OK response received from ESP32 :(", unix_timestamp);
+        return (int)BrainFlowExitCodes::SYNC_TIMEOUT_ERROR;
+    }
+}
+
 
 /* Function reads the serial data thread */
 void Cerelog_X8::read_thread ()
