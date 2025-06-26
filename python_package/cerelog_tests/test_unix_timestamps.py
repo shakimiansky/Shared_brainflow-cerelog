@@ -112,7 +112,7 @@ def test_unix_timestamps():
     print(f"[TEST] Testing Unix Timestamps on {platform.system()} (will auto-detect port)")
     print("=" * 60)
     
-    params.timeout = 5
+    params.timeout = 3
     time_len = 5  # seconds - shorter test to see timestamps
     log_file = 'test_unix_timestamps.log'
     
@@ -139,7 +139,7 @@ def test_unix_timestamps():
         
         # Collect data for specified duration
         print(f"[TIME] Collecting data for {time_len} seconds...")
-        time.sleep(time_len)
+        time.sleep(time_len)  # Collect some data
         
         board.stop_stream()
         print("[SUCCESS] Stream stopped successfully")

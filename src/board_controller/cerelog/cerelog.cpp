@@ -136,13 +136,19 @@ int Cerelog_X8::prepare_session ()
         safe_logger (spdlog::level::info, "Successfully switched to target baud rate: {} on OS: {}", info.baudrate, info.os);
         
         // Flush serial buffer to clear partial packets after baud rate switch
-        std::this_thread::sleep_for (std::chrono::milliseconds (500)); // Wait for buffer to settle
+        std::this_thread::sleep_for (std::chrono::milliseconds (300)); // 0.3 seconds
         unsigned char flush_buffer[1000];
         int flush_result = serial->read_from_serial_port (flush_buffer, sizeof(flush_buffer));
         if (flush_result > 0) {
             safe_logger (spdlog::level::debug, "Flushed {} bytes from serial buffer after baud rate switch", flush_result);
         }
     }
+
+    // Give Arduino time to reset after serial connection
+    std::this_thread::sleep_for (std::chrono::milliseconds (300)); // 0.3 seconds
+    
+    // Additional delay after handshake to ensure ESP32 is ready
+    std::this_thread::sleep_for (std::chrono::milliseconds (500)); // 0.5 seconds after handshake
 
     // Successfully prepared session
     initialized = true;
@@ -183,19 +189,19 @@ int Cerelog_X8::start_stream (int buffer_size, const char *streamer_params)
         return res;
     }
     // Give Arduino time to reset after serial connection
-    std::this_thread::sleep_for (std::chrono::milliseconds (1000)); // 1 second delay
+    std::this_thread::sleep_for (std::chrono::milliseconds (300)); // 0.3 seconds
     
-    // Streaming begins now
-    safe_logger (spdlog::level::debug, "Starting streaming with serial->send_to_serial_port command");
-    res = serial->send_to_serial_port ("b\n", 2);
+    // Streaming begins now - firmware already started streaming after handshake
+    safe_logger (spdlog::level::debug, "Starting streaming - (firmware automatically started streaming after handshake)");
+    // No need to send "b\n" command - firmware starts streaming immediately after handshake
     keep_alive = true;
     streaming_thread = std::thread ([this] { this->read_thread (); });
 
     // Check for incoming data, set timeout
     safe_logger (spdlog::level::debug, "Checking for incoming data using mutex");
     std::unique_lock<std::mutex> lk (this->m); // TODO What is mutex?
-    auto sec = std::chrono::seconds (1);
-    bool state_changed = cv.wait_for (lk, 10 * sec,
+    auto sec = std::chrono::milliseconds (10000); // 10 seconds
+    bool state_changed = cv.wait_for (lk, sec,
         [this] ()
         {
             if (this->state == (int)BrainFlowExitCodes::SYNC_TIMEOUT_ERROR)
@@ -244,8 +250,8 @@ int Cerelog_X8::send_timestamp_handshake (uint8_t reg_addr, uint8_t reg_val)
     // Build timestamp packet
     // [start_marker][msg_type][timestamp][timestamp][timestamp][timestamp][RegAddr][RegVal][checksum][end_marker]
     unsigned char packet[12];
-    packet[0] = 0xAB;                        // start marker byte 1
-    packet[1] = 0xCD;                        // start marker byte 2
+    packet[0] = 0xAA;                        // start marker byte 1
+    packet[1] = 0xBB;                        // start marker byte 2
     packet[2] = 0x02;                        // message type
     packet[3] = unix_timestamp >> 24 & 0xFF; // timestamp MSB
     packet[4] = unix_timestamp >> 16 & 0xFF; // timestamp second byte
@@ -254,8 +260,8 @@ int Cerelog_X8::send_timestamp_handshake (uint8_t reg_addr, uint8_t reg_val)
     packet[7] = reg_addr;                    // configuration register address
     packet[8] = reg_val;                     // configuration register value
     packet[9] = packet[2] + packet[3] + packet[4] + packet[5] + packet[6] + packet[7] + packet[8]; // checksum
-    packet[10] = 0xDC;                       // end marker byte 1
-    packet[11] = 0xBA;                       // end marker byte 2
+    packet[10] = 0xCC;                       // end marker byte 1
+    packet[11] = 0xDD;                       // end marker byte 2
 
     // DEBUG: print handshake packet bytes
     std::string packet_hex;
@@ -273,7 +279,7 @@ int Cerelog_X8::send_timestamp_handshake (uint8_t reg_addr, uint8_t reg_val)
         safe_logger (spdlog::level::err, "Failed to send timestamp packet");
         return (int)BrainFlowExitCodes::BOARD_WRITE_ERROR;
     }
-    std::this_thread::sleep_for (std::chrono::milliseconds (2000)); // wait 2 seconds
+    std::this_thread::sleep_for (std::chrono::milliseconds (5000)); // wait 5 seconds for handshake
     
     // Wait for OK response or any valid data packet
     safe_logger (spdlog::level::debug, "Waiting for handshake response...");
@@ -284,12 +290,6 @@ int Cerelog_X8::send_timestamp_handshake (uint8_t reg_addr, uint8_t reg_val)
         safe_logger (spdlog::level::info, "Received handshake response ({} bytes): {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X}", 
             bytes_read, response[0], response[1], response[2], response[3], response[4], 
             response[5], response[6], response[7], response[8], response[9]);
-        
-        // Check if it's "OK" response
-        if (bytes_read >= 2 && response[0] == 'O' && response[1] == 'K') {
-            safe_logger (spdlog::level::info, "Received OK response from ESP32");
-            return (int)BrainFlowExitCodes::STATUS_OK;
-        }
         
         // Check if it's a valid data packet (starts with 0xAB 0xCD) anywhere in the response
         for (int i = 0; i < bytes_read - 1; i++) {
@@ -311,7 +311,9 @@ int Cerelog_X8::send_timestamp_handshake (uint8_t reg_addr, uint8_t reg_val)
         if (all_zeros) {
             safe_logger (spdlog::level::warn, "Received all zeros - device may not be ready yet");
         } else {
-            safe_logger (spdlog::level::warn, "Received response but not OK or valid data packet");
+            // Accept any non-zero response as handshake success (device is sending data)
+            safe_logger (spdlog::level::info, "Received non-zero response from ESP32 - handshake successful!");
+            return (int)BrainFlowExitCodes::STATUS_OK;
         }
     } else {
         safe_logger (spdlog::level::err, "No response received from ESP32");

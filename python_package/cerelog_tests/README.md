@@ -19,7 +19,16 @@ python3 run_all_tests.py
   - Packet statistics
 - **Note**: This is a lower-level test for debugging serial issues
 
-### 2. **test_brainflow.py** - Main Integration Test
+### 2. **test_handshake.py** - Handshake Protocol Test
+- **Purpose**: Tests handshake protocol, baud rate switching, and ring buffer implementation
+- **What it tests**:
+  - New handshake packet format with markers `0xAA 0xBB` and `0xCC 0xDD`
+  - Ring buffer implementation for robust handshake detection
+  - Baud rate switching from 9600 to 230400 baud
+  - Data streaming after handshake
+- **Key Feature**: 24-byte ring buffer eliminates timing dependencies
+
+### 3. **test_brainflow.py** - Main Integration Test
 - **Purpose**: Tests basic BrainFlow integration, handshake, and data streaming
 - **What it tests**:
   - Port detection and connection
@@ -30,7 +39,7 @@ python3 run_all_tests.py
 - **Output**: CSV file with raw data, console output with channel statistics
 - **Debug**: Shows raw values for channels 2 and 8 to help diagnose issues
 
-### 3. **test_unix_timestamps.py** - Timestamp Synchronization
+### 4. **test_unix_timestamps.py** - Timestamp Synchronization
 - **Purpose**: Tests timestamp synchronization between Arduino and BrainFlow
 - **What it tests**:
   - Unix timestamp handshake
@@ -38,7 +47,7 @@ python3 run_all_tests.py
   - Timestamp progression over time
 - **Output**: Detailed timestamp analysis and comparison
 
-### 4. **test_validate_eeg.py** - Signal Quality Validation
+### 5. **test_validate_eeg.py** - Signal Quality Validation
 - **Purpose**: Tests EEG signal quality and validates data integrity
 - **What it tests**:
   - RMS values for each channel
@@ -46,6 +55,13 @@ python3 run_all_tests.py
   - Common Mode Rejection Ratio (CMRR)
   - Signal quality metrics
 - **Output**: Validation results saved to CSV
+
+### 6. **test_baud_rate_switch.py** - Baud Rate Configuration
+- **Purpose**: Tests dynamic baud rate configuration and handshake switching
+- **What it tests**:
+  - Baud rate switching functionality
+  - Configuration parameter passing
+  - Dynamic reconfiguration
 
 ## 🔧 Configuration
 
@@ -60,25 +76,27 @@ All tests use automatic port scanning:
 - **Linux**: `/dev/ttyUSB*` and `/dev/ttyACM*` patterns
 
 ### Handshake Protocol
-The timestamp handshake uses a 12-byte packet format:
+The timestamp handshake uses a 12-byte packet format with new markers:
 ```
-[0xAB][0xCD][0x02][timestamp][timestamp][timestamp][timestamp][reg_addr][reg_val][checksum][0xDC][0xBA]
+[0xAA][0xBB][0x02][timestamp][timestamp][timestamp][timestamp][reg_addr][reg_val][checksum][0xCC][0xDD]
 ```
 
 ## 📊 Expected Results
 
 ### Successful Integration
-- ✅ Handshake successful
+- ✅ Handshake successful with ring buffer
 - ✅ Streaming starts without timeout
 - ✅ 8 EEG channels receiving data
 - ✅ RMS values > 0.001V for active channels
 - ✅ Timestamp synchronization within ±1 second
+- ✅ Fast startup (< 10 seconds)
 
 ## 🐛 Debugging
 
 ### Log Files
 Each test generates detailed logs:
 - `test_brainflow.log` - Main integration logs
+- `test_handshake.log` - Handshake and ring buffer debugging
 - `test_unix_timestamps.log` - Timestamp debugging
 - `test_validate_eeg.log` - Signal validation logs
 
@@ -101,6 +119,7 @@ BoardShim.set_log_level(LogLevels.LEVEL_INFO.value)  # Less verbose
 - **Voltage Range**: -100 to +100 µV
 - **CMRR**: ≥ 60 dB
 - **Timestamp Sync**: ±1 second
+- **Startup Time**: < 10 seconds
 
 ## 📝 Usage Examples
 
@@ -108,6 +127,9 @@ BoardShim.set_log_level(LogLevels.LEVEL_INFO.value)  # Less verbose
 ```bash
 # Raw serial test
 python3 test_serial.py
+
+# Handshake test
+python3 test_handshake.py
 
 # Main integration test
 python3 test_brainflow.py
@@ -117,6 +139,9 @@ python3 test_unix_timestamps.py
 
 # Signal validation
 python3 test_validate_eeg.py
+
+# Baud rate test
+python3 test_baud_rate_switch.py
 ```
 
 ### Run All Tests
@@ -141,5 +166,6 @@ tail -50 test_brainflow.log
 For issues with the test suite:
 1. Check the log files for detailed error messages
 2. Verify Arduino firmware is up to date
-3. Ensure correct baud rate (115200)
+3. Ensure correct baud rate (9600 initial, variable after handshake)
 4. Power cycle Arduino device
+5. Check ring buffer implementation in firmware

@@ -17,8 +17,8 @@ def test_my_board():
     params = BrainFlowInputParams()    
     print(f"Using port scanning on {platform.system()} (will auto-detect port)")
     
-    params.timeout = 25
-    time_len = 5 # collect data for _ seconds
+    params.timeout = 10
+    time_len = 3       # Collect data for 3 seconds
     try:
         board = BoardShim(BoardIds.CERELOG_X8_BOARD, params)
         BoardShim.enable_dev_board_logger()

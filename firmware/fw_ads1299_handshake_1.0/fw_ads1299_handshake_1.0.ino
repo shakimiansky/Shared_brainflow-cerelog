@@ -128,73 +128,89 @@ static const regVal_pair ADS1299_REGISTER_LS[size_reg_ls] = {
     {0x17, 0}};
 
 // --- Timestamp from BrainFlow --- 
+int handshake_packet_size = 12;
 /* Looking for 12 byte handshake packet 
-    [0xAB][0xCD]
-    [0x02]
+    [0xAA][0xBB]  // start marker
+    [message_type]
     [timestamp][timestamp][timestamp][timestamp]
-    [reg_addr][reg_val]
+    [register_address][register_value]
     [checksum]
-    [0xDC][0xBA]
+    [0xCC][0xDD]  // end marker
 */ 
 const uint8_t MSG_TYPE_TIMESTAMP = 0x02;
-bool waitForTimestamp() { // from BrainFlow
-    // Only process if we have correct data
-    if (Serial.available() < 12) {
-        return false;
+const uint8_t HANDSHAKE_START_MARKER_1 = 0xAA;
+const uint8_t HANDSHAKE_START_MARKER_2 = 0xBB;
+const uint8_t HANDSHAKE_END_MARKER_1 = 0xCC;
+const uint8_t HANDSHAKE_END_MARKER_2 = 0xDD;
+
+// Ring buffer for handshake detection
+const uint8_t RING_BUFFER_SIZE = 24; // 2x handshake packet size so message doesn't get cut off
+uint8_t ring_buffer[RING_BUFFER_SIZE];
+uint8_t ring_head = 0;
+uint8_t ring_tail = 0;
+uint8_t ring_counter = 0;
+
+bool waitForTimestamp() {
+    // Read available data into ring buffer
+    while (Serial.available() > 0 && ring_counter < RING_BUFFER_SIZE) {
+        ring_buffer[ring_head] = Serial.read();
+        ring_head = (ring_head + 1) % RING_BUFFER_SIZE;
+        ring_counter++;
+    }
+    if (ring_counter < handshake_packet_size) {
+        return false; // Not enough data yet
     }
 
-    // Check start marker and message type (no timeout needed)
-    if (Serial.read() == 0xAB && Serial.read() == 0xCD && Serial.read() == MSG_TYPE_TIMESTAMP) {
-                
-        // Read timestamp (4 bytes)
-        uint32_t received_timestamp = 0;
-        received_timestamp |= (uint32_t)Serial.read() << 24;
-        received_timestamp |= (uint32_t)Serial.read() << 16;
-        received_timestamp |= (uint32_t)Serial.read() << 8;
-        received_timestamp |= (uint32_t)Serial.read();
+    // Scan the filled buffer for the start marker
+    for (uint8_t i = 0; i < handshake_packet_size + 3; i++) { // don't technically need end marker or checksum to read message
+        uint8_t ring_index = (ring_tail + i) % RING_BUFFER_SIZE;
+        if (ring_buffer[ring_index] == HANDSHAKE_START_MARKER_1 && 
+            ring_buffer[(ring_index + 1) % RING_BUFFER_SIZE] == HANDSHAKE_START_MARKER_2 && 
+            ring_buffer[(ring_index + 2) % RING_BUFFER_SIZE] == MSG_TYPE_TIMESTAMP) {
+            
+            // Read timestamp (4 bytes)
+            uint32_t received_timestamp = 0;
+            received_timestamp |= (uint32_t)ring_buffer[(ring_index + 3) % RING_BUFFER_SIZE] << 24;
+            received_timestamp |= (uint32_t)ring_buffer[(ring_index + 4) % RING_BUFFER_SIZE] << 16;
+            received_timestamp |= (uint32_t)ring_buffer[(ring_index + 5) % RING_BUFFER_SIZE] << 8;
+            received_timestamp |= (uint32_t)ring_buffer[(ring_index + 6) % RING_BUFFER_SIZE];
 
-        // Read parameters (2 bytes)
-        uint8_t reg_addr = Serial.read();
-        uint8_t reg_val = Serial.read();
+            // Read parameters (2 bytes)
+            uint8_t reg_addr = ring_buffer[(ring_index + 7) % RING_BUFFER_SIZE];
+            uint8_t reg_val = ring_buffer[(ring_index + 8) % RING_BUFFER_SIZE];
 
-        // Baud rate configuration
-        if (reg_addr == 0x01) { // baud rate register
-            uint32_t new_baud_rate = get_baud_rate_from_config(reg_val);
-            if (new_baud_rate > 0) {
-                DEBUG_PRINT("Current baud rate: ");
-                DEBUG_PRINTLN(Serial.baudRate());
-                DEBUG_PRINT("Switching to baud rate: ");
-                DEBUG_PRINTLN(new_baud_rate);
-                Serial.flush(); // Wait for all data to be transmitted
-                delay(100);
-                Serial.begin(new_baud_rate);
-                delay(2000);
-                DEBUG_PRINT("Baud rate successfully switched to: ");
-                DEBUG_PRINTLN(Serial.baudRate());
-            } else {
-                DEBUG_PRINTLN("Invalid baud rate configuration");
+            // Baud rate configuration
+            if (reg_addr == 0x01) { // baud rate register
+                uint32_t new_baud_rate = get_baud_rate_from_config(reg_val);
+                if (new_baud_rate > 0) {
+                    DEBUG_PRINT("Current baud rate: ");
+                    DEBUG_PRINTLN(Serial.baudRate());
+                    DEBUG_PRINT("Switching to baud rate: ");
+                    DEBUG_PRINTLN(new_baud_rate);
+                    Serial.flush(); // Wait for all data to be transmitted
+                    delay(100);
+                    Serial.begin(new_baud_rate);
+                    delay(100);
+                    DEBUG_PRINT("Baud rate successfully switched to: ");
+                    DEBUG_PRINTLN(Serial.baudRate());
+                } else {
+                    DEBUG_PRINTLN("Invalid baud rate configuration");
+                }
+            } else if (reg_addr != 0x00) {
+                // Apply other register settings
+                DEBUG_PRINT("User parameter received: ");
+                DEBUG_PRINTLN(reg_addr);
             }
-        } else if (reg_addr != 0x00) {
-            // Apply other register settings
-            DEBUG_PRINT("User parameter received: ");
-            DEBUG_PRINTLN(reg_addr);
+
+            // Set timestamp and switch baud rate
+            _unix_timestamp_reference = received_timestamp;
+            _millis_reference = millis();
+            _timestamp_initialized = true;
+            delay(100);
+            DEBUG_PRINT("Received timestamp: ");
+            DEBUG_PRINTLN(received_timestamp);
+            return true;
         }
-
-        // checksum (1 byte) + end marker (2 bytes)
-        Serial.read(); // checksum
-        Serial.read(); // 0xDC
-        Serial.read(); // 0xBA
-
-        // Set timestamp and respond "OK"
-        _unix_timestamp_reference = received_timestamp;
-        _millis_reference = millis();
-        _timestamp_initialized = true;
-        Serial.write("OK");
-        Serial.flush(); // Ensure 'OK' is transmitted before switching baud rate
-        delay(100); // time to read 'OK' before switching baud rate
-        DEBUG_PRINT("Received timestamp: ");
-        DEBUG_PRINTLN(received_timestamp);
-        return true;
     }
     return false; // data is not a handshake packet
 }
@@ -243,9 +259,9 @@ void ADS1299_WREG(uint8_t regAdd, uint8_t *values, uint8_t numRegs){
     _ADS1299_PREV_CMD = _CMD_ADC_WREG;
 
     // is this separate from handshake? 
-      // take in parameters to change e.g. sampling rate, gain, serial port, enable
-      // configuration params from Brainflow
-      // BF params to register map
+    // take in parameters to change e.g. sampling rate, gain, serial port, enable
+    // configuration params from Brainflow
+    // BF params to register map
 }
 
 // --- ADS1299 Read Registers (Arduino) ---
@@ -304,7 +320,7 @@ void ADS1299_SETUP(void) {
     digitalWrite(pin_PWDN_NUM, HIGH);
     digitalWrite(pin_RST_NUM, HIGH);
     DEBUG_PRINTLN("Init pins high");
-    delay(1000);
+    delay(100);
 
     ADS1299_SDATAC();
 
@@ -365,6 +381,20 @@ void print_all_ADS1299_registers_from_setup(void) {
     DEBUG_PRINTLN("-------------------------------");
 }
 
+uint32_t get_baud_rate_from_config(uint8_t config_val) {
+    switch (config_val) {
+        case 0x00: return 9600;    // default
+        case 0x01: return 19200;
+        case 0x02: return 38400; 
+        case 0x03: return 57600;
+        case 0x04: return 115200;  // fallback?
+        case 0x05: return 230400;  // MacOS limit
+        case 0x06: return 460800;
+        case 0x07: return 921600;  // Windows limit
+        default: return 0;         // Invalid config
+    }
+}
+
 // SETUP FUNCTION
 void setup() {
     // --- Serial Initialization ---
@@ -391,19 +421,19 @@ void setup() {
 
     digitalWrite(pin_LED_DEBUG, LOW);
 
-// --- SPI Initialization ---
-// Check if we're using ESP32 or AVR
-#if defined(ESP32)
-    // ESP32 SPI initialization
-    vspi = new SPIClass(VSPI);                                          // Create VSPI instance
-    vspi->begin(pin_SCK_NUM, pin_MISO_NUM, pin_MOSI_NUM, pin_CS_NUM);   // Initialize SPI
-    vspi->beginTransaction(SPISettings(SPI_FREQ, MSBFIRST, SPI_MODE1)); // 4 MHz SPI clock, MSB first, Mode 1 because CPOL = 0 and CPHA = 1
-#else
-    // Standard Arduino SPI initialization
-    // vspi = &SPI;  // Use the default SPI instance
-    vspi->begin(pin_SCK_NUM, pin_MISO_NUM, pin_MOSI_NUM, pin_CS_NUM);
-    vspi->beginTransaction(SPISettings(SPI_FREQ, MSBFIRST, SPI_MODE1)); // 8 MHz SPI clock, MSB first, Mode 1 because CPOL = 0 and CPHA = 1
-#endif
+    // --- SPI Initialization ---
+    // Check if we're using ESP32 or AVR
+    #if defined(ESP32)
+        // ESP32 SPI initialization
+        vspi = new SPIClass(VSPI);                                          // Create VSPI instance
+        vspi->begin(pin_SCK_NUM, pin_MISO_NUM, pin_MOSI_NUM, pin_CS_NUM);   // Initialize SPI
+        vspi->beginTransaction(SPISettings(SPI_FREQ, MSBFIRST, SPI_MODE1)); // 4 MHz SPI clock, MSB first, Mode 1 because CPOL = 0 and CPHA = 1
+    #else
+        // Standard Arduino SPI initialization
+        // vspi = &SPI;  // Use the default SPI instance
+        vspi->begin(pin_SCK_NUM, pin_MISO_NUM, pin_MOSI_NUM, pin_CS_NUM);
+        vspi->beginTransaction(SPISettings(SPI_FREQ, MSBFIRST, SPI_MODE1)); // 8 MHz SPI clock, MSB first, Mode 1 because CPOL = 0 and CPHA = 1
+    #endif
     delay(500);
 
     // --- ADS1299 Initialization ---
@@ -456,82 +486,68 @@ void loop() {
     if (currentMicros - _last_query_time >= SAMPLE_PRD_us) {
         _last_query_time = currentMicros;
         if (dataReady) {
-          dataReady = false;
+            dataReady = false;
 
-          // Turn on ESP32 light
-          #ifdef DEBUG_ENABLED
-            static int led_counter = 0;
-            digitalWrite(pin_LED_DEBUG, (++led_counter % SAMPLE_FREQ) < (SAMPLE_FREQ * 3 / 4)); // blink light in DEBUG mode
-          #else
-            digitalWrite(pin_LED_DEBUG, HIGH);
-          #endif
+            // Turn on ESP32 light
+            #ifdef DEBUG_ENABLED
+                static int led_counter = 0;
+                digitalWrite(pin_LED_DEBUG, (++led_counter % SAMPLE_FREQ) < (SAMPLE_FREQ * 3 / 4)); // blink light in DEBUG mode
+            #else
+                digitalWrite(pin_LED_DEBUG, HIGH);
+            #endif
           
-          // Read ADS1299 data
-          byte raw_data[ADS1299_TOTAL_DATA_BYTES];
-          read_ADS1299_data(raw_data);
+            // Read ADS1299 data
+            byte raw_data[ADS1299_TOTAL_DATA_BYTES];
+            read_ADS1299_data(raw_data);
 
-          // Create message buffer
-          const uint16_t START_MARKER = 0xABCD; // 2 bytes
-          const uint16_t END_MARKER = 0xDCBA;   // 2 bytes
-          byte packet[PACKET_TOTAL_SIZE];       // start + len + data + checksum + end
+            // Create message buffer
+            const uint16_t START_MARKER = 0xABCD; // 2 bytes
+            const uint16_t END_MARKER = 0xDCBA;   // 2 bytes
+            byte packet[PACKET_TOTAL_SIZE];       // start + len + data + checksum + end
 
-          // Start marker (2 bytes)
-          packet[PACKET_IDX_START_MARKER] = (START_MARKER >> 8) & 0xFF;
-          packet[PACKET_IDX_START_MARKER + 1] = START_MARKER & 0xFF;
+            // Start marker (2 bytes)
+            packet[PACKET_IDX_START_MARKER] = (START_MARKER >> 8) & 0xFF;
+            packet[PACKET_IDX_START_MARKER + 1] = START_MARKER & 0xFF;
 
-          // Message length (1 byte)
-          packet[PACKET_IDX_LENGTH] = PACKET_MSG_LENGTH;
+            // Message length (1 byte)
+            packet[PACKET_IDX_LENGTH] = PACKET_MSG_LENGTH;
 
-          // UNIX timestamp (4 bytes)
-          uint32_t timestamp = _unix_timestamp_reference + ((millis() - _millis_reference) / 1000); // old: uint32_t timestamp = (uint32_t)(packet_counter & 0xFFFFFFFF);  // Only send lower 4 bytes
-          #ifdef DEBUG_ENABLED 
-            static int debug_counter = 0;
-            if (++debug_counter % 100 == 0) { // print every 100 packets
-              Serial.print("DEBUG: ref=");
-              Serial.print(_unix_timestamp_reference);
-              Serial.print(", elapsed=");
-              Serial.print((millis() - _millis_reference) / 1000);
-              Serial.print(", timestamp=");
-              Serial.println(timestamp);
-            } 
-          #endif
-          packet[PACKET_IDX_TIMESTAMP] = (timestamp >> 24) & 0xFF;
-          packet[PACKET_IDX_TIMESTAMP + 1] = (timestamp >> 16) & 0xFF;
-          packet[PACKET_IDX_TIMESTAMP + 2] = (timestamp >> 8) & 0xFF;
-          packet[PACKET_IDX_TIMESTAMP + 3] = timestamp & 0xFF;
+            // UNIX timestamp (4 bytes)
+            uint32_t timestamp = _unix_timestamp_reference + ((millis() - _millis_reference) / 1000); // old: uint32_t timestamp = (uint32_t)(packet_counter & 0xFFFFFFFF);  // Only send lower 4 bytes
+            #ifdef DEBUG_ENABLED 
+                static int debug_counter = 0;
+                if (++debug_counter % 100 == 0) { // print every 100 packets
+                    Serial.print("DEBUG: ref=");
+                    Serial.print(_unix_timestamp_reference);
+                    Serial.print(", elapsed=");
+                    Serial.print((millis() - _millis_reference) / 1000);
+                    Serial.print(", timestamp=");
+                    Serial.println(timestamp);
+                } 
+            #endif
+            packet[PACKET_IDX_TIMESTAMP] = (timestamp >> 24) & 0xFF;
+            packet[PACKET_IDX_TIMESTAMP + 1] = (timestamp >> 16) & 0xFF;
+            packet[PACKET_IDX_TIMESTAMP + 2] = (timestamp >> 8) & 0xFF;
+            packet[PACKET_IDX_TIMESTAMP + 3] = timestamp & 0xFF;
 
-          // Copy ADS1299 data (27 bytes)
-          for (uint8_t i = 0; i < ADS1299_TOTAL_DATA_BYTES; i++) {
-              packet[PACKET_IDX_ADS1299_DATA + i] = raw_data[i];
-          }
+            // Copy ADS1299 data (27 bytes)
+            for (uint8_t i = 0; i < ADS1299_TOTAL_DATA_BYTES; i++) {
+                packet[PACKET_IDX_ADS1299_DATA + i] = raw_data[i];
+            }
 
-          // Compute checksum (sum of all bytes from length to last data byte)
-          uint8_t checksum = 0;
-          for (uint8_t i = PACKET_IDX_LENGTH; i < PACKET_IDX_CHECKSUM; i++) {
-              checksum += packet[i];
-          }
-          packet[PACKET_IDX_CHECKSUM] = checksum;
+            // Compute checksum (sum of all bytes from length to last data byte)
+            uint8_t checksum = 0;
+            for (uint8_t i = PACKET_IDX_LENGTH; i < PACKET_IDX_CHECKSUM; i++) {
+                checksum += packet[i];
+            }
+            packet[PACKET_IDX_CHECKSUM] = checksum;
 
-          // End marker (2 bytes)
-          packet[PACKET_IDX_END_MARKER] = (END_MARKER >> 8) & 0xFF;
-          packet[PACKET_IDX_END_MARKER + 1] = END_MARKER & 0xFF;
+            // End marker (2 bytes)
+            packet[PACKET_IDX_END_MARKER] = (END_MARKER >> 8) & 0xFF;
+            packet[PACKET_IDX_END_MARKER + 1] = END_MARKER & 0xFF;
 
-          // Send entire packet over Serial
-          Serial.write(packet, sizeof(packet));
+            // Send entire packet over Serial
+            Serial.write(packet, sizeof(packet));
         }
-    }
-}
-
-uint32_t get_baud_rate_from_config(uint8_t config_val) {
-    switch (config_val) {
-        case 0x00: return 9600;    // default
-        case 0x01: return 19200;
-        case 0x02: return 38400; 
-        case 0x03: return 57600;
-        case 0x04: return 115200;  // fallback?
-        case 0x05: return 230400;  // MacOS limit
-        case 0x06: return 460800;
-        case 0x07: return 921600;  // Windows limit
-        default: return 0;         // Invalid config
     }
 }

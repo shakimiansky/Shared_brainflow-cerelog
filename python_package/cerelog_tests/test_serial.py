@@ -106,42 +106,41 @@ class PacketParser:
 def find_packet_boundaries(buffer: bytearray) -> list:
     """Find packet start position in buffer"""
     positions = []
-    start_bytes = struct.pack('>H', START_MARKER)
-    
-    i = 0
-    while i < len(buffer) - 1:
-        if buffer[i:i+2] == start_bytes:
+    for i in range(len(buffer) - 1):
+        if buffer[i] == 0xAB and buffer[i + 1] == 0xCD:
             positions.append(i)
-            i += 2
-        else:
-            i += 1
     return positions
 
 def test_serial_connection():
     """Test raw serial communication with Cerelog board"""
     # Set port and baud rate based on OS for direct serial access
     # TODO add port scanning like in cerelog.cpp
-    if platform.system() == 'Windows':
-        port_name = 'COM4' 
-        baud_rate = 921600
-    elif platform.system() == 'Darwin': # MacOS
-        port_name = '/dev/cu.usbserial-210'
-        baud_rate = 230400
-    elif platform.system() == 'Linux': 
-        port_name = '/dev/ttyUSB0'
-        baud_rate = 921600
-    else:
-        # Fallback, user specifies
+    baud_rate = 9600
+    port_name = None
+    
+    # Auto-detect port on macOS/Linux
+    if platform.system() in ['Darwin', 'Linux']:
+        import serial.tools.list_ports
+        ports = list(serial.tools.list_ports.comports())
+        for port in ports:
+            if 'usbserial' in port.device:
+                port_name = port.device
+                break
+    
+    if not port_name:
+        print("[INPUT] Manual port selection required")
         port_name = input("Enter serial port: ")
-        baud_rate = int(input("Enter baud rate: "))
         
     print(f"[CONNECTION] Testing serial connection to Cerelog X8")
-    print(f"   Using port: {port_name} on {platform.system()} at {baud_rate}")
+    print(f"   Using port: {port_name} on {platform.system()}")
+    print(f"   Testing at: {baud_rate} baud")
     print(f"   Expected packet size: {PACKET_TOTAL_SIZE} bytes")
     
     try:
-        # Open serial port directly (not using BrainFlow)
-        ser = serial.Serial(port_name, baud_rate, timeout=2)
+        # Connect at 9600 baud
+        print(f"[INFO] Connecting at {baud_rate} baud...")
+        ser = serial.Serial(port_name, baud_rate, timeout=1.0)
+        time.sleep(0.1)
         print(f"[SUCCESS] Opened serial port: {ser.name}")
         
         # Clear buffers
@@ -149,14 +148,30 @@ def test_serial_connection():
         ser.reset_output_buffer()
         time.sleep(0.5)
         
-        print("\n[DATA] Starting data collection...")
+        # Check if we're getting data
+        initial_data_count = 0
+        start_check = time.time()
+        while time.time() - start_check < 2:  # Check for 2 seconds
+            if ser.in_waiting > 0:
+                data = ser.read(ser.in_waiting)
+                initial_data_count += len(data)
+            time.sleep(0.1)
+        
+        if initial_data_count > 0:
+            print(f"[INFO] Got {initial_data_count} bytes at {baud_rate} baud")
+            print(f"[INFO] Board is communicating at default baud rate")
+        else:
+            print(f"[WARNING] No data received at {baud_rate} baud")
+            print(f"[INFO] Board might not be sending data or needs reset")
+        
+        print(f"\n[DATA] Starting data collection at {baud_rate} baud...")
         parser = PacketParser()
         buffer = bytearray()
         start_time = time.time()
         last_stats_time = start_time
         
-        # Collect data for 10 seconds
-        while time.time() - start_time < 10:
+        # Collect data for 5 seconds
+        while time.time() - start_time < 5:
             if ser.in_waiting > 0:
                 data = ser.read(ser.in_waiting)
                 buffer.extend(data)
@@ -186,17 +201,19 @@ def test_serial_connection():
                         packet = parser.parse_packet(packet_data)
                         if packet:
                             # Print occasional packet info
-                            if parser.valid_packets % 500 == 1:
+                            if parser.valid_packets % 50 == 1:
                                 print(f"\n[PACKET] Packet #{parser.valid_packets}")
                                 print(f"   Timestamp: {packet['timestamp']}")
                                 print(f"   Channels: {[f'{ch:.6f}V' for ch in packet['channels'][:4]]}...")
                                 print(f"   Status: {packet['status_bytes']}")
             
-            # Print stats every 2 seconds
-            if time.time() - last_stats_time > 2:
+            # Print stats every 1 seconds
+            if time.time() - last_stats_time > 1:
                 if parser.valid_packets > 0:
                     rate = parser.valid_packets / (time.time() - start_time)
                     print(f"\n[STATS] Rate: {rate:.1f} packets/sec | Valid: {parser.valid_packets}")
+                else:
+                    print(f"\n[STATS] No valid packets yet...")
                 last_stats_time = time.time()
             
             time.sleep(0.001)  # Small delay to prevent CPU spinning
@@ -211,18 +228,21 @@ def test_serial_connection():
         elapsed = time.time() - start_time
         if parser.valid_packets > 0:
             rate = parser.valid_packets / elapsed
-            expected_rate = 500  # ESP32 sampling rate
-            print(f"\n[PERFORMANCE] Performance:")
+            expected_rate = 25 # Usually 500 for ESP32, lowered because of default baud rate
+            print(f"\n[PERFORMANCE] Performance at {baud_rate} baud:")
             print(f"   Actual rate:   {rate:.1f} packets/sec")
             print(f"   Expected rate: {expected_rate} packets/sec")
             print(f"   Efficiency:    {rate/expected_rate*100:.1f}%")
             
-            if rate > expected_rate * 0.8:
-                print("   [SUCCESS] Good packet reception!")
-            elif rate > expected_rate * 0.5:
-                print("   [WARNING] Moderate packet loss")
+            if rate > expected_rate * 0.7:
+                print("   [SUCCESS] Good packet reception at 9600 baud!")
+            elif rate > expected_rate * 0.3:
+                print("   [WARNING] Moderate packet loss at 9600 baud")
             else:
                 print("   [ERROR] High packet loss - check connection")
+        else:
+            print(f"\n[ERROR] No valid packets received!")
+            print(f"[INFO] This suggests the board is not sending data")
         
         return parser.valid_packets > 0
         

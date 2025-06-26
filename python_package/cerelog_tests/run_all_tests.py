@@ -8,7 +8,11 @@ import subprocess
 import sys
 import time
 import os
+import warnings
 from datetime import datetime
+
+# Suppress deprecation warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="pkg_resources")
 
 def run_test(test_name, test_file, description):
     """Run a single test and return results"""
@@ -23,13 +27,25 @@ def run_test(test_name, test_file, description):
                               capture_output=True, text=True, timeout=60)
         duration = time.time() - start_time
         
+        # Check if stderr contains only deprecation warnings
+        stderr_clean = result.stderr
+        if stderr_clean:
+            # Remove deprecation warnings from stderr
+            lines = stderr_clean.split('\n')
+            filtered_lines = []
+            for line in lines:
+                if 'UserWarning' not in line and 'pkg_resources' not in line and 'deprecated' not in line.lower():
+                    filtered_lines.append(line)
+            stderr_clean = '\n'.join(filtered_lines)
+        
         if result.returncode == 0:
             print(f"[SUCCESS] {test_name} PASSED ({duration:.1f}s)")
-            return True, result.stdout, result.stderr
+            return True, result.stdout, stderr_clean
         else:
             print(f"[FAILED] {test_name} FAILED ({duration:.1f}s)")
-            print(f"Error: {result.stderr}")
-            return False, result.stdout, result.stderr
+            if stderr_clean:
+                print(f"Error: {stderr_clean}")
+            return False, result.stdout, stderr_clean
             
     except subprocess.TimeoutExpired:
         print(f"[TIMEOUT] {test_name} TIMEOUT (>60s)")
@@ -48,6 +64,11 @@ def main():
             "name": "Raw Serial Test",
             "file": "test_serial.py",
             "description": "Tests direct serial communication (bypasses BrainFlow)"
+        },
+        {
+            "name": "Handshake Test",
+            "file": "test_handshake.py",
+            "description": "Tests handshake protocol, baud rate switching, and ring buffer implementation"
         },
         {
             "name": "BrainFlow Integration Test",
@@ -118,11 +139,20 @@ def main():
         print("  [WARNING] Multiple tests failed. Review the integration setup.")
     
     print(f"\n[FILES] Log files generated:")
-    log_files = ["test_serial.log", "test_brainflow.log", "test_unix_timestamps.log", "test_validate_eeg.log"]
+    log_files = [
+        "test_serial.log", 
+        "test_handshake.log",
+        "test_brainflow.log", 
+        "test_unix_timestamps.log", 
+        "test_validate_eeg.log",
+        "test_baud_rate_switch.log"
+    ]
     for log_file in log_files:
         if os.path.exists(log_file):
             size = os.path.getsize(log_file) / 1024  # KB
             print(f"  - {log_file} ({size:.1f} KB)")
+        else:
+            print(f"  - {log_file} (not generated)")
     
     return 0 if failed == 0 else 1
 

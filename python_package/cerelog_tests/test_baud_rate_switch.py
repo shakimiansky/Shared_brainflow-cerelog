@@ -42,8 +42,8 @@ def test_dynamic_baud_rate_configuration():
         board.start_stream(45000)  # 45 second buffer
         print("   [SUCCESS] Stream started successfully")
         
-        print("\n3. Collecting data for 5 seconds...")
-        time.sleep(5)
+        print("\n3. Collecting data for 3 seconds...")
+        time.sleep(3)  # Collect data for 3 seconds (1500 samples at 500 Hz)
         
         # Get data
         data = board.get_board_data()
@@ -53,7 +53,7 @@ def test_dynamic_baud_rate_configuration():
         
         if num_samples > 0:
             print(f"   [SUCCESS] Data shape: {data.shape}")
-            print(f"   [SUCCESS] Sample rate: {num_samples / 5:.1f} Hz")
+            print(f"   [SUCCESS] Sample rate: {num_samples / 3:.1f} Hz")
             
             # Check if we have data on all channels
             eeg_channels = board.get_eeg_channels(board_id)
