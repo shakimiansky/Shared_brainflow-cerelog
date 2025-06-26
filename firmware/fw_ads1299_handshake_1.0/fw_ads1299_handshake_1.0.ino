@@ -471,6 +471,14 @@ void setup() {
     ADS1299_RDATAC();
     delay(100);
     ADS1299_START();
+
+    // Turn on ESP32 light
+    #ifdef DEBUG_ENABLED
+        static int led_counter = 0;
+        digitalWrite(pin_LED_DEBUG, (++led_counter % SAMPLE_FREQ) < (SAMPLE_FREQ * 3 / 4)); // blink light in DEBUG mode
+    #else
+        digitalWrite(pin_LED_DEBUG, HIGH);
+    #endif
 }
 
 // LOOP FUNCTION
@@ -487,14 +495,6 @@ void loop() {
         _last_query_time = currentMicros;
         if (dataReady) {
             dataReady = false;
-
-            // Turn on ESP32 light
-            #ifdef DEBUG_ENABLED
-                static int led_counter = 0;
-                digitalWrite(pin_LED_DEBUG, (++led_counter % SAMPLE_FREQ) < (SAMPLE_FREQ * 3 / 4)); // blink light in DEBUG mode
-            #else
-                digitalWrite(pin_LED_DEBUG, HIGH);
-            #endif
           
             // Read ADS1299 data
             byte raw_data[ADS1299_TOTAL_DATA_BYTES];

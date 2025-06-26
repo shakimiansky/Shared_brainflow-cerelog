@@ -186,6 +186,7 @@ int Cerelog_X8::start_stream (int buffer_size, const char *streamer_params)
     int res = prepare_for_acquisition (buffer_size, streamer_params); // this is BrainFlow command
     if (res != (int)BrainFlowExitCodes::STATUS_OK)
     {
+        safe_logger(spdlog::level::debug, "Stuck at prepare_for_acquisition()");
         return res;
     }
     // Give Arduino time to reset after serial connection
@@ -202,8 +203,7 @@ int Cerelog_X8::start_stream (int buffer_size, const char *streamer_params)
     std::unique_lock<std::mutex> lk (this->m); // TODO What is mutex?
     auto sec = std::chrono::milliseconds (10000); // 10 seconds
     bool state_changed = cv.wait_for (lk, sec,
-        [this] ()
-        {
+        [this] () {
             if (this->state == (int)BrainFlowExitCodes::SYNC_TIMEOUT_ERROR)
             {
                 safe_logger (spdlog::level::warn, "SYNC_TIMEOUT_ERROR detected in wait_for lambda");
@@ -211,8 +211,7 @@ int Cerelog_X8::start_stream (int buffer_size, const char *streamer_params)
             return (this->state != (int)BrainFlowExitCodes::SYNC_TIMEOUT_ERROR);
         });
 
-    if (state_changed)
-    { // how is state_changed being calculated?
+    if (state_changed) { // how is state_changed being calculated?
         this->is_streaming = true;
         safe_logger (spdlog::level::debug,
             "The state of the board has changed from TIMEOUT ERROR to " +
@@ -786,11 +785,6 @@ int Cerelog_X8::release_session ()
     }
 
     return (int)BrainFlowExitCodes::STATUS_OK;
-}
-
-int Cerelog_X8::config_board_with_bytes (const char *bytes, int len)
-{
-    return 5;
 }
 
 double Cerelog_X8::convert_counter_to_timestamp (uint64_t packet_counter)
