@@ -12,18 +12,6 @@ This test verifies that:
 import time
 import sys
 import os
-import logging
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('test_baud_rate_switch.log'),
-        logging.StreamHandler(sys.stdout)
-    ]
-)
-logger = logging.getLogger(__name__)
 
 # Add the parent directory to the path to import brainflow
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -35,9 +23,9 @@ from brainflow.data_filter import DataFilter
 def test_dynamic_baud_rate_configuration():
     """Test the dynamic baud rate configuration through handshake."""
     
-    logger.info("=== Dynamic Baud Rate Configuration Test ===")
-    logger.info("This test verifies baud rate configuration through handshake parameters")
-    logger.info("")
+    print("=== Dynamic Baud Rate Configuration Test ===")
+    print("This test verifies baud rate configuration through handshake parameters")
+    print("")
     
     # Board configuration
     board_id = BoardIds.CERELOG_X8_BOARD
@@ -45,51 +33,51 @@ def test_dynamic_baud_rate_configuration():
     board = BoardShim(board_id, input_params)
     
     try:
-        logger.info("1. Preparing session (should send baud rate config in handshake)...")
+        print("1. Preparing session (should send baud rate config in handshake)...")
         board.prepare_session()
-        logger.info("   ✓ Session prepared successfully")
-        logger.info("   ✓ Handshake sent with baud rate configuration")
+        print("   [SUCCESS] Session prepared successfully")
+        print("   [SUCCESS] Handshake sent with baud rate configuration")
         
-        logger.info("\n2. Starting stream (should be at configured baud rate)...")
+        print("\n2. Starting stream (should be at configured baud rate)...")
         board.start_stream(45000)  # 45 second buffer
-        logger.info("   ✓ Stream started successfully")
+        print("   [SUCCESS] Stream started successfully")
         
-        logger.info("\n3. Collecting data for 5 seconds...")
+        print("\n3. Collecting data for 5 seconds...")
         time.sleep(5)
         
         # Get data
         data = board.get_board_data()
         num_samples = data.shape[1] if data.size > 0 else 0
         
-        logger.info(f"   ✓ Collected {num_samples} samples")
+        print(f"   [SUCCESS] Collected {num_samples} samples")
         
         if num_samples > 0:
-            logger.info(f"   ✓ Data shape: {data.shape}")
-            logger.info(f"   ✓ Sample rate: {num_samples / 5:.1f} Hz")
+            print(f"   [SUCCESS] Data shape: {data.shape}")
+            print(f"   [SUCCESS] Sample rate: {num_samples / 5:.1f} Hz")
             
             # Check if we have data on all channels
             eeg_channels = board.get_eeg_channels(board_id)
             if len(eeg_channels) >= 8:
-                logger.info(f"   ✓ All {len(eeg_channels)} EEG channels active")
+                print(f"   [SUCCESS] All {len(eeg_channels)} EEG channels active")
         
-        logger.info("\n4. Stopping stream...")
+        print("\n4. Stopping stream...")
         board.stop_stream()
-        logger.info("   ✓ Stream stopped successfully")
+        print("   [SUCCESS] Stream stopped successfully")
         
-        logger.info("\n5. Releasing session...")
+        print("\n5. Releasing session...")
         board.release_session()
-        logger.info("   ✓ Session released successfully")
+        print("   [SUCCESS] Session released successfully")
         
-        logger.info("\n=== Test Results ===")
+        print("\n=== Test Results ===")
         if num_samples > 0:
-            logger.info("✓ SUCCESS: Dynamic baud rate configuration appears to be working")
-            logger.info("✓ Data streaming is active at configured baud rate")
+            print("[SUCCESS] SUCCESS: Dynamic baud rate configuration appears to be working")
+            print("[SUCCESS] Data streaming is active at configured baud rate")
         else:
-            logger.error("✗ FAILURE: No data received")
+            print("[FAILED] FAILURE: No data received")
             return False
             
     except Exception as e:
-        logger.error(f"✗ ERROR: {e}")
+        print(f"[ERROR] ERROR: {e}")
         return False
     
     return True
@@ -98,9 +86,9 @@ def test_dynamic_baud_rate_configuration():
 def test_baud_rate_configuration_values():
     """Test different baud rate configuration values."""
     
-    logger.info("\n=== Baud Rate Configuration Values Test ===")
-    logger.info("This test verifies the baud rate configuration mapping")
-    logger.info("")
+    print("\n=== Baud Rate Configuration Values Test ===")
+    print("This test verifies the baud rate configuration mapping")
+    print("")
     
     # Baud rate configuration mapping
     baud_configs = {
@@ -114,11 +102,11 @@ def test_baud_rate_configuration_values():
         0x07: 921600,   # Super speed
     }
     
-    logger.info("Baud Rate Configuration Mapping:")
+    print("Baud Rate Configuration Mapping:")
     for config_val, baud_rate in baud_configs.items():
-        logger.info(f"   Config 0x{config_val:02X} → {baud_rate:,} baud")
+        print(f"   Config 0x{config_val:02X} → {baud_rate:,} baud")
     
-    logger.info(f"\nExpected target baud rate for macOS: {baud_configs[0x05]:,} baud")
+    print(f"\nExpected target baud rate for macOS: {baud_configs[0x05]:,} baud")
     
     return True
 
@@ -126,48 +114,48 @@ def test_baud_rate_configuration_values():
 def test_manual_configuration_disabled():
     """Test that manual configuration is properly disabled."""
     
-    logger.info("\n=== Manual Configuration Test ===")
-    logger.info("This test verifies manual configuration is disabled")
-    logger.info("")
+    print("\n=== Manual Configuration Test ===")
+    print("This test verifies manual configuration is disabled")
+    print("")
     
     board_id = BoardIds.CERELOG_X8_BOARD
     input_params = BrainFlowInputParams()
     board = BoardShim(board_id, input_params)
     
     try:
-        logger.info("1. Preparing session...")
+        print("1. Preparing session...")
         board.prepare_session()
         
-        logger.info("2. Testing manual baud rate configuration...")
+        print("2. Testing manual baud rate configuration...")
         try:
             response = board.config_board("baud_rate=4")  # Try to set to 115200
-            logger.warning(f"   ⚠ Unexpected success: {response}")
+            print(f"   [WARNING] Unexpected success: {response}")
             # This should not succeed since manual configuration is disabled
             board.release_session()
             return False
             
         except BrainFlowError as e:
             if "INVALID_ARGUMENTS_ERROR" in str(e) or "unable to config board" in str(e):
-                logger.info("   ✓ Correctly rejects manual configuration (as expected)")
-                logger.info(f"   Error: {e}")
+                print("   [SUCCESS] Correctly rejects manual configuration (as expected)")
+                print(f"   Error: {e}")
             else:
-                logger.error(f"   ✗ Unexpected error type: {e}")
+                print(f"   [ERROR] Unexpected error type: {e}")
                 board.release_session()
                 return False
         
         board.release_session()
         
     except Exception as e:
-        logger.error(f"✗ ERROR: {e}")
+        print(f"[ERROR] ERROR: {e}")
         return False
     
     return True
 
 
 if __name__ == "__main__":
-    logger.info("Cerelog X8 Dynamic Baud Rate Configuration Test")
-    logger.info("===============================================")
-    logger.info("")
+    print("Cerelog X8 Dynamic Baud Rate Configuration Test")
+    print("===============================================")
+    print("")
     
     # Run the main test
     success = test_dynamic_baud_rate_configuration()
@@ -178,13 +166,13 @@ if __name__ == "__main__":
     # Run the manual configuration test
     manual_success = test_manual_configuration_disabled()
     
-    logger.info("\n" + "="*60)
+    print("\n" + "="*60)
     if success and config_success and manual_success:
-        logger.info("🎉 ALL TESTS PASSED!")
-        logger.info("Dynamic baud rate configuration is working correctly.")
-        logger.info("Handshake parameters are being used for baud rate configuration.")
+        print("[SUCCESS] ALL TESTS PASSED!")
+        print("Dynamic baud rate configuration is working correctly.")
+        print("Handshake parameters are being used for baud rate configuration.")
     else:
-        logger.error("❌ SOME TESTS FAILED!")
-        logger.error("Check the output above for details.")
+        print("[FAILED] SOME TESTS FAILED!")
+        print("Check the output above for details.")
     
     sys.exit(0 if success and config_success and manual_success else 1) 

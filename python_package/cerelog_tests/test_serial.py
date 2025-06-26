@@ -9,20 +9,8 @@ import serial
 import time
 import sys
 import struct
-import logging
 from typing import Optional, Tuple
 from brainflow.board_shim import BrainFlowInputParams, BoardShim, BoardIds, LogLevels
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('test_serial.log'),
-        logging.StreamHandler(sys.stdout)
-    ]
-)
-logger = logging.getLogger(__name__)
 
 # Packet format constants (from ESP32 code)
 PACKET_TOTAL_SIZE = 37
@@ -108,12 +96,12 @@ class PacketParser:
     def print_stats(self):
         total = self.valid_packets + self.invalid_packets + self.partial_packets + self.checksum_errors
         if total > 0:
-            logger.info(f"\n=== Packet Statistics ===")
-            logger.info(f"Valid packets:    {self.valid_packets:4d} ({self.valid_packets/total*100:.1f}%)")
-            logger.info(f"Invalid markers:  {self.invalid_packets:4d} ({self.invalid_packets/total*100:.1f}%)")
-            logger.info(f"Checksum errors:  {self.checksum_errors:4d} ({self.checksum_errors/total*100:.1f}%)")
-            logger.info(f"Partial packets:  {self.partial_packets:4d} ({self.partial_packets/total*100:.1f}%)")
-            logger.info(f"Total processed:  {total:4d}")
+            print(f"\n=== Packet Statistics ===")
+            print(f"Valid packets:    {self.valid_packets:4d} ({self.valid_packets/total*100:.1f}%)")
+            print(f"Invalid markers:  {self.invalid_packets:4d} ({self.invalid_packets/total*100:.1f}%)")
+            print(f"Checksum errors:  {self.checksum_errors:4d} ({self.checksum_errors/total*100:.1f}%)")
+            print(f"Partial packets:  {self.partial_packets:4d} ({self.partial_packets/total*100:.1f}%)")
+            print(f"Total processed:  {total:4d}")
 
 def find_packet_boundaries(buffer: bytearray) -> list:
     """Find packet start position in buffer"""
@@ -147,21 +135,21 @@ def test_serial_connection():
         port_name = input("Enter serial port: ")
         baud_rate = int(input("Enter baud rate: "))
         
-    logger.info(f"🔌 Testing serial connection to Cerelog X8")
-    logger.info(f"   Using port: {port_name} on {platform.system()} at {baud_rate}")
-    logger.info(f"   Expected packet size: {PACKET_TOTAL_SIZE} bytes")
+    print(f"[CONNECTION] Testing serial connection to Cerelog X8")
+    print(f"   Using port: {port_name} on {platform.system()} at {baud_rate}")
+    print(f"   Expected packet size: {PACKET_TOTAL_SIZE} bytes")
     
     try:
         # Open serial port directly (not using BrainFlow)
         ser = serial.Serial(port_name, baud_rate, timeout=2)
-        logger.info(f"✓ Opened serial port: {ser.name}")
+        print(f"[SUCCESS] Opened serial port: {ser.name}")
         
         # Clear buffers
         ser.reset_input_buffer()
         ser.reset_output_buffer()
         time.sleep(0.5)
         
-        logger.info("\n📡 Starting data collection...")
+        print("\n[DATA] Starting data collection...")
         parser = PacketParser()
         buffer = bytearray()
         start_time = time.time()
@@ -199,22 +187,22 @@ def test_serial_connection():
                         if packet:
                             # Print occasional packet info
                             if parser.valid_packets % 500 == 1:
-                                logger.info(f"\n📦 Packet #{parser.valid_packets}")
-                                logger.info(f"   Timestamp: {packet['timestamp']}")
-                                logger.info(f"   Channels: {[f'{ch:.6f}V' for ch in packet['channels'][:4]]}...")
-                                logger.info(f"   Status: {packet['status_bytes']}")
+                                print(f"\n[PACKET] Packet #{parser.valid_packets}")
+                                print(f"   Timestamp: {packet['timestamp']}")
+                                print(f"   Channels: {[f'{ch:.6f}V' for ch in packet['channels'][:4]]}...")
+                                print(f"   Status: {packet['status_bytes']}")
             
             # Print stats every 2 seconds
             if time.time() - last_stats_time > 2:
                 if parser.valid_packets > 0:
                     rate = parser.valid_packets / (time.time() - start_time)
-                    logger.info(f"\n📊 Rate: {rate:.1f} packets/sec | Valid: {parser.valid_packets}")
+                    print(f"\n[STATS] Rate: {rate:.1f} packets/sec | Valid: {parser.valid_packets}")
                 last_stats_time = time.time()
             
             time.sleep(0.001)  # Small delay to prevent CPU spinning
         
         ser.close()
-        logger.info(f"\n✓ Serial port closed")
+        print(f"\n[SUCCESS] Serial port closed")
         
         # Final statistics
         parser.print_stats()
@@ -224,72 +212,72 @@ def test_serial_connection():
         if parser.valid_packets > 0:
             rate = parser.valid_packets / elapsed
             expected_rate = 500  # ESP32 sampling rate
-            logger.info(f"\n📈 Performance:")
-            logger.info(f"   Actual rate:   {rate:.1f} packets/sec")
-            logger.info(f"   Expected rate: {expected_rate} packets/sec")
-            logger.info(f"   Efficiency:    {rate/expected_rate*100:.1f}%")
+            print(f"\n[PERFORMANCE] Performance:")
+            print(f"   Actual rate:   {rate:.1f} packets/sec")
+            print(f"   Expected rate: {expected_rate} packets/sec")
+            print(f"   Efficiency:    {rate/expected_rate*100:.1f}%")
             
             if rate > expected_rate * 0.8:
-                logger.info("   ✅ Good packet reception!")
+                print("   [SUCCESS] Good packet reception!")
             elif rate > expected_rate * 0.5:
-                logger.info("   ⚠️  Moderate packet loss")
+                print("   [WARNING] Moderate packet loss")
             else:
-                logger.info("   ❌ High packet loss - check connection")
+                print("   [ERROR] High packet loss - check connection")
         
         return parser.valid_packets > 0
         
     except serial.SerialException as e:
-        logger.error(f"❌ Serial error: {e}")
+        print(f"[ERROR] Serial error: {e}")
         return False
     except KeyboardInterrupt:
-        logger.info(f"\n⏹️  Test interrupted by user")
+        print(f"\n[STOP] Test interrupted by user")
         return False
     except Exception as e:
-        logger.error(f"❌ Unexpected error: {e}")
+        print(f"[ERROR] Unexpected error: {e}")
         return False
 
 def test_port_detection():
     """Test if the port can be detected and opened"""
     import serial.tools.list_ports
     
-    logger.info("🔍 Scanning for serial ports...")
+    print("[SCAN] Scanning for serial ports...")
     ports = list(serial.tools.list_ports.comports())
     
     if not ports:
-        logger.error("❌ No serial ports found")
+        print("[ERROR] No serial ports found")
         return False
     
-    logger.info("📋 Available ports:")
+    print("[PORTS] Available ports:")
     target_port = None
     for port in ports:
-        logger.info(f"   {port.device} - {port.description}")
+        print(f"   {port.device} - {port.description}")
         if 'usbserial' in port.device:
             target_port = port.device
     
     if target_port:
-        logger.info(f"🎯 Target port detected: {target_port}")
+        print(f"[TARGET] Target port detected: {target_port}")
         return True
     else:
-        logger.warning("⚠️  No USB serial ports found")
+        print("[WARNING] No USB serial ports found")
         return False
 
 if __name__ == "__main__":
-    logger.info("🧪 Cerelog X8 Raw Serial Test")
-    logger.info("=" * 40)
+    print("[TEST] Cerelog X8 Raw Serial Test")
+    print("=" * 40)
     
     # Test 1: Port detection
     if not test_port_detection():
-        logger.error("\n❌ Port detection failed")
+        print("\n[ERROR] Port detection failed")
         sys.exit(1)
     
-    logger.info("")
+    print("")
     
     # Test 2: Serial communication
     if test_serial_connection():
-        logger.info("\n🎉 Serial test completed successfully!")
-        logger.info("   Your ESP32 is sending properly formatted packets.")
+        print("\n[SUCCESS] Serial test completed successfully!")
+        print("   Your ESP32 is sending properly formatted packets.")
         sys.exit(0)
     else:
-        logger.error("\n❌ Serial test failed")
-        logger.error("   Check ESP32 firmware, connections, or port settings.")
+        print("\n[ERROR] Serial test failed")
+        print("   Check ESP32 firmware, connections, or port settings.")
         sys.exit(1)
