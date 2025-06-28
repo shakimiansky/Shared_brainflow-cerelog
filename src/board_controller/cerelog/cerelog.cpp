@@ -1,3 +1,8 @@
+/**********************
+Authors: 1. Suraj Kumar (surajratnam99@gmail.com)
+         2. Ben Beaudet (bbeaudet0@gmail.com)
+***********************/
+
 #include "cerelog.h"
 #include <ctime>
 #include <stdint.h>
