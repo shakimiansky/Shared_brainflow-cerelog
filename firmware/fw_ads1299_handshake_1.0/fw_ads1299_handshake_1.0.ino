@@ -144,26 +144,27 @@ const uint8_t HANDSHAKE_END_MARKER_1 = 0xCC;
 const uint8_t HANDSHAKE_END_MARKER_2 = 0xDD;
 
 // Ring buffer for handshake detection
-const uint8_t RING_BUFFER_SIZE = 24; // 2x handshake packet size so message doesn't get cut off
+const uint8_t RING_BUFFER_SIZE = 24; // 2x handshake packet size so the full 12 bytes is stored
 uint8_t ring_buffer[RING_BUFFER_SIZE];
-uint8_t ring_head = 0;
+uint8_t ring_head = 0; // starting point changes as we cycle through the ring
 uint8_t ring_tail = 0;
-uint8_t ring_counter = 0;
+uint8_t ring_counter = 0; // tracks # of bytes in current ring
 
+// Function uses O(n) search algorithm and ring buffer to detect handshake packets within data stream
 bool waitForTimestamp() {
     // Read available data into ring buffer
     while (Serial.available() > 0 && ring_counter < RING_BUFFER_SIZE) {
-        ring_buffer[ring_head] = Serial.read();
-        ring_head = (ring_head + 1) % RING_BUFFER_SIZE;
+        ring_buffer[ring_head] = Serial.read(); // add byte to buffer
+        ring_head = (ring_head + 1) % RING_BUFFER_SIZE; // iterate to next open position
         ring_counter++;
     }
     if (ring_counter < handshake_packet_size) {
-        return false; // Not enough data yet
+        return false; // buffer is not full yet
     }
 
-    // Scan the filled buffer for the start marker
-    for (uint8_t i = 0; i < handshake_packet_size + 3; i++) { // don't technically need end marker or checksum to read message
-        uint8_t ring_index = (ring_tail + i) % RING_BUFFER_SIZE;
+    // Buffer is full, scan for start marker
+    for (uint8_t i = 0; i < handshake_packet_size + 3; i++) { // optimizes for when end of message is cut off
+        uint8_t ring_index = (ring_tail + i) % RING_BUFFER_SIZE; // need index to account for variable start positions
         if (ring_buffer[ring_index] == HANDSHAKE_START_MARKER_1 && 
             ring_buffer[(ring_index + 1) % RING_BUFFER_SIZE] == HANDSHAKE_START_MARKER_2 && 
             ring_buffer[(ring_index + 2) % RING_BUFFER_SIZE] == MSG_TYPE_TIMESTAMP) {
@@ -440,6 +441,7 @@ void setup() {
     ADS1299_SETUP();
 
     // --- Timestamp fallback ---
+    // I think we can delete this, it's from when waitForTimestamp was not in void loop
     DEBUG_PRINTLN("Waiting for timestamp from BrainFlow...");
     if (!waitForTimestamp()) { 
         DEBUG_PRINTLN("No timestamp received - using fallback");
@@ -455,14 +457,6 @@ void setup() {
 
     // --- Attach Interrupt ---
     attachInterrupt(digitalPinToInterrupt(pin_DRDY_NUM), onDRDYFalling, FALLING);
-
-    // --- Fallback timestamp after timeout ---
-    if (!_timestamp_initialized) {
-        DEBUG_PRINTLN("Timeout waiting for timestamp. Using fallback timestamp.");
-        _unix_timestamp_reference = 1500000000UL;  // 1.5B is July 2017
-        _millis_reference = millis();
-        _timestamp_initialized = true;
-    }
 
     DEBUG_PRINTLN("Setup complete.");
     digitalWrite(pin_START_NUM, HIGH);

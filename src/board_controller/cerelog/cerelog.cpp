@@ -157,6 +157,7 @@ int Cerelog_X8::prepare_session ()
 
     // Successfully prepared session
     initialized = true;
+    safe_logger (spdlog::level::info, "prepare_session() completed successfully, returning STATUS_OK");
     return (int)BrainFlowExitCodes::STATUS_OK;
 }
 
@@ -348,6 +349,12 @@ void Cerelog_X8::read_thread ()
     if (serial == nullptr)
     {
         safe_logger (spdlog::level::err, "Serial pointer is null in read_thread");
+        // Notify condition variable to prevent deadlock
+        {
+            std::lock_guard<std::mutex> lk (this->m);
+            this->state = (int)BrainFlowExitCodes::BOARD_NOT_READY_ERROR;
+        }
+        this->cv.notify_one();
         return;
     }
 
@@ -355,6 +362,12 @@ void Cerelog_X8::read_thread ()
     if (board_descr.find ("default") == board_descr.end ())
     {
         safe_logger (spdlog::level::err, "Board descriptor 'default' not found");
+        // Notify condition variable to prevent deadlock
+        {
+            std::lock_guard<std::mutex> lk (this->m);
+            this->state = (int)BrainFlowExitCodes::BOARD_NOT_READY_ERROR;
+        }
+        this->cv.notify_one();
         return;
     }
     const auto &default_descr = board_descr["default"];
@@ -364,6 +377,12 @@ void Cerelog_X8::read_thread ()
         default_descr.find ("marker_channel") == default_descr.end ())
     {
         safe_logger (spdlog::level::err, "Board descriptor missing required fields");
+        // Notify condition variable to prevent deadlock
+        {
+            std::lock_guard<std::mutex> lk (this->m);
+            this->state = (int)BrainFlowExitCodes::BOARD_NOT_READY_ERROR;
+        }
+        this->cv.notify_one();
         return;
     }
 
@@ -375,6 +394,12 @@ void Cerelog_X8::read_thread ()
     catch (...)
     {
         safe_logger (spdlog::level::err, "Failed to get num_rows from board_descr");
+        // Notify condition variable to prevent deadlock
+        {
+            std::lock_guard<std::mutex> lk (this->m);
+            this->state = (int)BrainFlowExitCodes::BOARD_NOT_READY_ERROR;
+        }
+        this->cv.notify_one();
         return;
     }
 
@@ -386,6 +411,12 @@ void Cerelog_X8::read_thread ()
     catch (...)
     {
         safe_logger (spdlog::level::err, "Failed to get eeg_channels from board_descr");
+        // Notify condition variable to prevent deadlock
+        {
+            std::lock_guard<std::mutex> lk (this->m);
+            this->state = (int)BrainFlowExitCodes::BOARD_NOT_READY_ERROR;
+        }
+        this->cv.notify_one();
         return;
     }
 
@@ -400,6 +431,12 @@ void Cerelog_X8::read_thread ()
     {
         safe_logger (spdlog::level::err,
             "Failed to get timestamp_channel or marker_channel from board_descr");
+        // Notify condition variable to prevent deadlock
+        {
+            std::lock_guard<std::mutex> lk (this->m);
+            this->state = (int)BrainFlowExitCodes::BOARD_NOT_READY_ERROR;
+        }
+        this->cv.notify_one();
         return;
     }
 
@@ -408,6 +445,12 @@ void Cerelog_X8::read_thread ()
         marker_channel >= num_rows)
     {
         safe_logger (spdlog::level::err, "Invalid timestamp or marker channel index");
+        // Notify condition variable to prevent deadlock
+        {
+            std::lock_guard<std::mutex> lk (this->m);
+            this->state = (int)BrainFlowExitCodes::BOARD_NOT_READY_ERROR;
+        }
+        this->cv.notify_one();
         return;
     }
     // If we don't have enough EEG channels of data coming in
@@ -415,6 +458,12 @@ void Cerelog_X8::read_thread ()
     {
         safe_logger (
             spdlog::level::err, "Not enough EEG channels in board_descr (need at least 8)");
+        // Notify condition variable to prevent deadlock
+        {
+            std::lock_guard<std::mutex> lk (this->m);
+            this->state = (int)BrainFlowExitCodes::BOARD_NOT_READY_ERROR;
+        }
+        this->cv.notify_one();
         return;
     }
 
@@ -423,6 +472,12 @@ void Cerelog_X8::read_thread ()
         if (eeg_channels[i] < 0 || eeg_channels[i] >= num_rows)
         {
             safe_logger (spdlog::level::err, "EEG channel index {} out of bounds", eeg_channels[i]);
+            // Notify condition variable to prevent deadlock
+            {
+                std::lock_guard<std::mutex> lk (this->m);
+                this->state = (int)BrainFlowExitCodes::BOARD_NOT_READY_ERROR;
+            }
+            this->cv.notify_one();
             return;
         }
     }
@@ -441,6 +496,10 @@ void Cerelog_X8::read_thread ()
     // Counter for logging every 1000 samples
     // TODO still needed?
     size_t sample_counter = 0;
+    
+    // Add timeout counter to prevent infinite waiting
+    int consecutive_read_failures = 0;
+    const int MAX_CONSECUTIVE_FAILURES = 1000; // 1 second at 1ms intervals
 
     while (keep_alive)
     {
@@ -470,6 +529,7 @@ void Cerelog_X8::read_thread ()
         {
             safe_logger (spdlog::level::err, "Buffer length invalid: {}", buffer_len);
             std::this_thread::sleep_for (std::chrono::milliseconds (1));
+            consecutive_read_failures++;
             continue;
         }
 
@@ -478,6 +538,7 @@ void Cerelog_X8::read_thread ()
         if (res > 0)
         {
             buffer_len += res;
+            consecutive_read_failures = 0; // Reset failure counter on successful read
             if (buffer_len > READ_CHUNK_SIZE)
             {
                 safe_logger (spdlog::level::err, "Buffer overflow detected in read_thread");
@@ -488,6 +549,19 @@ void Cerelog_X8::read_thread ()
         {
             safe_logger (spdlog::level::debug, "Failed to read from serial port");
             std::this_thread::sleep_for (std::chrono::milliseconds (1));
+            consecutive_read_failures++;
+            
+            // If we've had too many consecutive failures, notify the condition variable
+            if (consecutive_read_failures >= MAX_CONSECUTIVE_FAILURES)
+            {
+                safe_logger (spdlog::level::warn, "Too many consecutive read failures, notifying timeout");
+                {
+                    std::lock_guard<std::mutex> lk (this->m);
+                    this->state = (int)BrainFlowExitCodes::SYNC_TIMEOUT_ERROR;
+                }
+                this->cv.notify_one();
+                return;
+            }
             continue;
         }
 
