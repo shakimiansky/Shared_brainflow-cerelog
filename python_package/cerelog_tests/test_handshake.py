@@ -58,7 +58,7 @@ def test_handshake():
     
     # Determine port and baud rates
     if platform.system() == 'Darwin':  # macOS
-        port_name = '/dev/cu.usbserial-110'
+        port_name = '/dev/cu.usbserial-10'
         initial_baud = 9600
         target_baud = 230400
     elif platform.system() == 'Windows':
