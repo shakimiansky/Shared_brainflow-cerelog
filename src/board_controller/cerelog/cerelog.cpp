@@ -98,6 +98,22 @@ int Cerelog_X8::prepare_session ()
         return (int)BrainFlowExitCodes::UNABLE_TO_OPEN_PORT_ERROR;
     }
 
+
+
+
+//The fix that makes the work - Simon - compatable with 'new' google doc fw
+
+  // ADD THIS DELAY HERE
+    // =================================================================
+    safe_logger (spdlog::level::info, "Port opened. Waiting 5 seconds for board to reset...");
+    std::this_thread::sleep_for (std::chrono::milliseconds (5000)); // 5 full seconds
+
+//lets goooo!!!!
+
+
+
+
+
     // Set default baud rate for handshake
     response = serial->set_custom_baudrate (info.default_baudrate);
     if (response < 0)
