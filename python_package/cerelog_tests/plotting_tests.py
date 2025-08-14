@@ -6,29 +6,20 @@ from brainflow.board_shim import BoardShim, BrainFlowInputParams, BoardIds, Brai
 
 def main():
     """
-    A simple script to connect to a BCI, collect data for a few seconds,
-    and then plot the EEG data.
+    Connects to a BCI, collects a significant amount of data, and plots each
+    EEG channel in a clean, professional subplot layout for clear analysis.
     """
     # Board and acquisition parameters
     board_id = BoardIds.CERELOG_X8_BOARD
-    duration_seconds = 10
+    duration_seconds = 30  # Increased to 30 seconds for more data points
 
     # --- 1. SETUP THE BOARD ---
-    # BrainFlow uses a params object to configure the board
     params = BrainFlowInputParams()
-
-
-
-    # ADD THIS LINE - THIS IS THE FIX
-    params.timeout = 10  # Set a generous timeout for stable data reading
-
+    params.timeout = 15  # A slightly longer timeout for more robust streaming
     
-    # Create the BoardShim object
     board = BoardShim(board_id, params)
 
-    # Use a try/finally block to ensure session is always released
     try:
-        # Get board info using static methods
         eeg_channels = BoardShim.get_eeg_channels(board_id)
         timestamp_channel = BoardShim.get_timestamp_channel(board_id)
         sampling_rate = BoardShim.get_sampling_rate(board_id)
@@ -37,7 +28,6 @@ def main():
         print(f"EEG Channels: {eeg_channels}")
         print(f"Sampling Rate: {sampling_rate} Hz")
 
-        # Prepare the session (finds the board and establishes connection)
         board.prepare_session()
 
         # --- 2. ACQUIRE DATA ---
@@ -45,7 +35,6 @@ def main():
         board.start_stream()
         time.sleep(duration_seconds)
         
-        # Stop the stream and get the data from the internal buffer
         board.stop_stream()
         print("Stream stopped. Getting data...")
         data = board.get_board_data()
@@ -55,28 +44,40 @@ def main():
             return
 
         # --- 3. PROCESS AND PLOT DATA ---
-        # Get the specific data streams from the data array
         eeg_data = data[eeg_channels]
         timestamps = data[timestamp_channel]
+
+        # CRITICAL: Convert data from Volts (V) to Microvolts (µV) for standard EEG plotting
+        eeg_data *= 1e6
 
         # Create a time axis starting from 0
         time_axis = timestamps - timestamps[0]
 
-        print("Plotting data...")
-        plt.figure(figsize=(15, 8))
+        print("Plotting data in a 4x2 subplot grid...")
 
-        # Plot each EEG channel with a vertical offset for clarity
-        offset_value = 150 # µV
-        for i, channel_data in enumerate(eeg_data):
-            plt.plot(time_axis, channel_data + i * offset_value, label=f'Channel {eeg_channels[i]}')
+        # Create a figure and a grid of subplots (4 rows, 2 columns)
+        # `sharex=True` ensures all subplots share the same time axis
+        fig, axes = plt.subplots(4, 2, figsize=(18, 10), sharex=True)
+        
+        # Add a main title for the entire figure
+        fig.suptitle(f'{duration_seconds} Seconds of Cerelog EEG Data', fontsize=16)
 
-        # Add titles and labels for clarity
-        plt.title(f'{duration_seconds} Seconds of Cerelog EEG Data')
-        plt.xlabel('Time (s)')
-        plt.ylabel('Voltage (µV) - Channels are offset for clarity')
-        plt.legend(loc='upper right')
-        plt.grid(True)
-        plt.tight_layout()
+        # Flatten the 2D array of axes for easy iteration
+        axes = axes.flatten()
+
+        # Plot each EEG channel on its own subplot
+        for i, channel_id in enumerate(eeg_channels):
+            ax = axes[i]
+            ax.plot(time_axis, eeg_data[i], linewidth=0.8)
+            ax.set_title(f'Channel {channel_id}')
+            ax.set_ylabel('Voltage (µV)')
+            ax.grid(True)
+        
+        # Add a shared X-axis label to the bottom of the figure
+        fig.text(0.5, 0.04, 'Time (s)', ha='center', va='center')
+        
+        # Adjust layout to prevent titles and labels from overlapping
+        plt.tight_layout(rect=[0, 0.05, 1, 0.96])
 
         # Show the plot
         plt.show()
@@ -87,7 +88,6 @@ def main():
         print(f"An unexpected error occurred: {e}")
     finally:
         # --- 4. CLEAN UP ---
-        # Always release the session to free the COM port
         if board.is_prepared():
             print("\nReleasing session.")
             board.release_session()
