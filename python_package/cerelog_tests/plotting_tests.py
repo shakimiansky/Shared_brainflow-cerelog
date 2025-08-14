@@ -16,6 +16,12 @@ def main():
     # --- 1. SETUP THE BOARD ---
     # BrainFlow uses a params object to configure the board
     params = BrainFlowInputParams()
+
+
+
+    # ADD THIS LINE - THIS IS THE FIX
+    params.timeout = 10  # Set a generous timeout for stable data reading
+
     
     # Create the BoardShim object
     board = BoardShim(board_id, params)

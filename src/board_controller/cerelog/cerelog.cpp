@@ -27,13 +27,13 @@ PortInfo get_port_info ()
 // OS detection
 #ifdef _WIN32
     info.os = "Windows";
-    info.baudrate = 921600;
+    info.baudrate = 115200;
 #elif defined(__APPLE__)
     info.os = "Darwin";   // MacOS
-    info.baudrate = 230400;
+    info.baudrate = 115200;
 #elif defined(__linux__)
     info.os = "Linux";
-    info.baudrate = 921600; // TODO needs verification
+    info.baudrate = 115200; // TODO needs verification
 #else
     info.os = "Unknown";
     info.baudrate = 115200; // TODO set to lowest common denominator OR prompt manual input
