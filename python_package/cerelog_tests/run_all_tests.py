@@ -61,7 +61,7 @@ def main():
     
     tests = [
         {
-            "name": "Raw Serial Test ::: DISCLAIMER #This test is trash and always fails!!!! Bc pyserial sucks or it was written poorly",
+            "name": "Raw Serial Test ::: This test now works",
             "file": "test_serial.py",
             "description": "Tests direct serial communication (bypasses BrainFlow)"
         },
