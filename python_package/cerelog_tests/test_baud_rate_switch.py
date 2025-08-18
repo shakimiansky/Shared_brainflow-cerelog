@@ -106,7 +106,7 @@ def test_baud_rate_configuration_values():
     for config_val, baud_rate in baud_configs.items():
         print(f"   Config 0x{config_val:02X} → {baud_rate:,} baud")
     
-    print(f"\nExpected target baud rate for macOS: {baud_configs[0x05]:,} baud")
+    print(f"\nExpected target baud rate for macOS: {baud_configs[0x04]:,} baud")
     
     return True
 

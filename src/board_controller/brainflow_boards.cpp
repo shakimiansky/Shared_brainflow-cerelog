@@ -1221,7 +1221,7 @@ BrainFlowBoards::BrainFlowBoards()
     };
     brainflow_boards_json["boards"]["65"]["default"] = {
         {"name", "Cerelog_X8_BOARD"},
-        {"sampling_rate", 500},
+        {"sampling_rate", 250},
         {"timestamp_channel", 10},
         {"marker_channel", 9},
         {"num_rows", 11},
