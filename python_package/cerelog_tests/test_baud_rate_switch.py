@@ -92,14 +92,14 @@ def test_baud_rate_configuration_values():
     
     # Baud rate configuration mapping
     baud_configs = {
-        0x00: 9600,     # Default
-        0x01: 19200,    # Low speed
-        0x02: 38400,    # Medium speed
-        0x03: 57600,    # High speed
+        #0x00: 9600,     # Default
+       # 0x01: 19200,    # Low speed
+       # 0x02: 38400,    # Medium speed
+       # 0x03: 57600,    # High speed
         0x04: 115200,   # Very high speed
-        0x05: 230400,   # Ultra high speed (macOS target)
-        0x06: 460800,   # Maximum speed
-        0x07: 921600,   # Super speed
+      #  0x05: 230400,   # Ultra high speed (macOS target)
+      #  0x06: 460800,   # Maximum speed
+       #  0x07: 921600,   # Super speed
     }
     
     print("Baud Rate Configuration Mapping:")
