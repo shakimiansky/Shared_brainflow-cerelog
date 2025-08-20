@@ -24,7 +24,7 @@ private:
     double last_sync_timestamp = 0.0;
     int sync_count = 0;
     bool sync_established = false;
-    int sampling_rate = 500;
+    int sampling_rate = 250;
     int send_timestamp_handshake (uint8_t reg_addr = 0x00, uint8_t reg_val = 0x00);
     int get_baud_rate_from_config (uint8_t config_val);
 
