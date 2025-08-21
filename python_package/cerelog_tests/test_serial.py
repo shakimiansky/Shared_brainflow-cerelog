@@ -100,19 +100,19 @@ def run_standalone_diagnostic():
 
     # --- Step 2: Persistent Handshake ---
     print("\n--- STEP 2: Handshake and Baud Rate Negotiation ---")
-    target_baud_rate = 230400 if platform.system() == 'Darwin' else 921600
-    baud_config_val = 0x05 if platform.system() == 'Darwin' else 0x07
-    
+    # On Windows, BrainFlow defaults to 115200 (config 0x04) not 921600.
+    # Let's match that for a consistent test.
+    target_baud_rate = 115200
+    baud_config_val = 0x04
+
     handshake_packet = create_handshake_packet(baud_config_val)
     print(f"[INFO] Target baud rate for {platform.system()}: {target_baud_rate}")
-    
-    # To overcome timing issues, we will send the handshake multiple times.
-    print("[INFO] Persistently sending handshake command (3 attempts)...")
-    for i in range(3):
-        print(f"   Attempt {i+1}/3... Writing {len(handshake_packet)} bytes.")
-        ser.write(handshake_packet)
-        time.sleep(0.2)
-    print("[INFO] Handshake attempts complete.")
+    print(f"[INFO] Sending a single, definitive handshake command...")
+
+    ser.write(handshake_packet)
+    time.sleep(0.2) # Give the board a moment to process the handshake and switch its baud rate.
+
+    print("[INFO] Handshake sent.")
 
     # --- Step 3: Switch Host to High Speed ---
     print("\n--- STEP 3: Reconfiguring Host to High Speed ---")
