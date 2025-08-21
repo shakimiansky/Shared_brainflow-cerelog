@@ -44,7 +44,7 @@ def main():
         buffer_size_samples = 2 * 60 * sampling_rate 
         board.start_stream(buffer_size_samples)
 
-        
+
         time.sleep(2)
 
         initial_data = board.get_board_data()
@@ -90,51 +90,50 @@ def main():
 def update_plot(frame, lines, axes):
     """
     This function is called periodically to update the plot data.
-    Now with error handling and diagnostics.
+    This version uses the CORRECT method to get real-time data.
     """
     global data_buffer, y_limits
 
     try:
-        # --- 1. Get new data ---
-        new_data = board.get_current_board_data(0)
-        num_new_samples = new_data.shape[1]
+        # --- 1. Get the number of new samples available ---
+        num_samples_available = board.get_board_data_count()
 
-        # --- 2. DIAGNOSTIC PRINT ---
-        # This will tell us if the data stream has stopped.
-        if num_new_samples > 0:
-            print(f"Received {num_new_samples} new samples. Total buffer size: {data_buffer.shape[1]}")
+        if num_samples_available > 0:
+            # --- 2. Get exactly that many samples ---
+            new_data = board.get_board_data(num_samples_available)
+            
+            # --- 3. Append to our local buffer ---
+            print(f"Received {new_data.shape[1]} new samples. Total buffer size: {data_buffer.shape[1]}")
             data_buffer = np.hstack((data_buffer, new_data))
         else:
-            print("No new samples received.")
-            # If no new data, we don't need to redraw, just return.
+            # No new data, no need to redraw.
             return lines
 
-        # --- 3. Manage buffer size ---
-        buffer_limit = window_size * 2
+        # --- 4. Manage buffer size (keep only the data we need for plotting) ---
+        # Keep a little more than the window size for smoother processing
+        buffer_limit = int(window_size * 1.5) 
         if data_buffer.shape[1] > buffer_limit:
             data_buffer = data_buffer[:, -buffer_limit:]
 
-        # --- 4. Prepare data for plotting ---
+        # --- 5. Prepare the slice of data for the current plot window ---
         plot_data = data_buffer[:, -window_size:]
-        eeg_plot_data = plot_data[eeg_channels] * 1e6
+        
+        # Ensure we have a full window of data to prevent dimension mismatch errors
+        if plot_data.shape[1] < window_size:
+            return lines # Not enough data yet to fill the plot, wait for next frame
 
-        # --- 5. IMPROVED: Create a relative time vector ---
-        # This makes the X-axis always show 0 to SECONDS_TO_DISPLAY
-        time_vector = np.linspace(0, SECONDS_TO_DISPLAY, num=plot_data.shape[1])
+        eeg_plot_data = plot_data[eeg_channels] * 1e6
+        time_vector = np.linspace(0, SECONDS_TO_DISPLAY, num=window_size)
 
         # --- 6. Update each subplot ---
         for i, (line, ax) in enumerate(zip(lines, axes)):
             channel_data = eeg_plot_data[i]
-
-            # --- ROBUSTNESS: Handle potential NaN/inf values from bad data ---
-            if np.any(~np.isfinite(channel_data)):
-                print(f"Warning: Channel {eeg_channels[i]} contains invalid data (NaN or Inf). Skipping update for this channel.")
-                continue # Skip this channel for this frame
-
+            
+            # Center the data by removing the DC offset for better visualization
             centered_data = channel_data - np.mean(channel_data)
             line.set_data(time_vector, centered_data)
 
-            # Adaptive Y-Axis Logic (from previous version)
+            # Adaptive Y-Axis Logic
             max_val = np.max(centered_data)
             min_val = np.min(centered_data)
             if np.isclose(max_val, min_val):
@@ -152,8 +151,6 @@ def update_plot(frame, lines, axes):
             y_limits[i] = (new_min, new_max)
 
     except Exception as e:
-        # --- THIS IS THE MOST IMPORTANT ADDITION ---
-        # It will print any error that happens inside this function.
         print(f"!!! ERROR IN UPDATE_PLOT: {e}")
 
     return lines
