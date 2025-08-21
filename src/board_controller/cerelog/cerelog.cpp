@@ -226,10 +226,10 @@ int Cerelog_X8::start_stream (int buffer_size, const char *streamer_params)
     auto sec = std::chrono::milliseconds (10000); // 10 seconds
     bool state_changed = cv.wait_for (lk, sec,
         [this] () {
-            if (this->state == (int)BrainFlowExitCodes::SYNC_TIMEOUT_ERROR)
-            {
-                safe_logger (spdlog::level::warn, "SYNC_TIMEOUT_ERROR detected in wait_for lambda");
-            }
+           // if (this->state == (int)BrainFlowExitCodes::SYNC_TIMEOUT_ERROR)
+           // {
+           //     safe_logger (spdlog::level::warn, "SYNC_TIMEOUT_ERROR detected in wait_for lambda");
+           // }
             return (this->state != (int)BrainFlowExitCodes::SYNC_TIMEOUT_ERROR);
         });
 
