@@ -60,15 +60,15 @@ def test_handshake():
     if platform.system() == 'Darwin':  # macOS
         port_name = '/dev/cu.usbserial-10'
         initial_baud = 9600
-        target_baud = 230400
+        target_baud = 115000
     elif platform.system() == 'Windows':
         port_name = 'COM4'
         initial_baud = 9600
-        target_baud = 921600
+        target_baud = 115000
     else:
         port_name = '/dev/ttyUSB0'
         initial_baud = 9600
-        target_baud = 921600
+        target_baud = 115000
     
     print(f"[TEST] Manual Handshake Test")
     print(f"[INFO] Platform: {platform.system()}")

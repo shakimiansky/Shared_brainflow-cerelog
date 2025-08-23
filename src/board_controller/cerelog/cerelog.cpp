@@ -23,7 +23,14 @@ PortInfo get_port_info () {
     PortInfo info;
     info.default_baudrate = 9600;
 #ifdef _WIN32
-    info.os = "Windows"; info.baudrate = 115200;
+    info.os = "Windows";
+    info.baudrate = 115200;
+#elif defined(__APPLE__)
+    info.os = "Darwin";   // MacOS
+    info.baudrate = 115200; // <-- ADD THIS MISSING LINE BACK
+#elif defined(__linux__)
+    info.os = "Linux";
+    info.baudrate = 115200;
 #else
     info.os = "Unknown"; info.baudrate = 115200;
 #endif
@@ -70,8 +77,13 @@ int Cerelog_X8::prepare_session () {
     if (send_timestamp_handshake (0x01, baud_config) != (int)BrainFlowExitCodes::STATUS_OK) {
         return (int)BrainFlowExitCodes::BOARD_WRITE_ERROR;
     }
-    // This brief pause matches `time.sleep(0.1)` in Python after sending
+    
+    
+    
+    
+    // This brief pause matches `time.sleep(0.1)` in Python after sending...actually make it 5 sec cause mac slow
     std::this_thread::sleep_for (std::chrono::milliseconds (100));
+    
 
     // Step 3: Switch the HOST to the higher baud rate
     safe_logger (spdlog::level::info, "Switching host to target baud rate: {}", info.baudrate);
@@ -79,9 +91,14 @@ int Cerelog_X8::prepare_session () {
         safe_logger (spdlog::level::err, "Failed to switch host to target baudrate.");
         return (int)BrainFlowExitCodes::BOARD_WRITE_ERROR;
     }
-    
-    // Step 4: Wait, flush, and verify the stream (Matches `time.sleep(0.5)` and `ser.read(...)` in Python)
-    safe_logger (spdlog::level::debug, "Host switched. Waiting 500ms before verification...");
+
+
+    //Step 4: Wait, flush, and verify the stream (Matches `time.sleep(0.5)` and `ser.read(...)` in Python)
+    // this buffer flush was to replace below but didnt work serial->read_from_serial_port (new unsigned char[2048], 2048);
+    //tried to repace below code with above buffer flush but didnt work
+
+    //above buffer flush replaces the fancy cerial verify cause mac fail 
+    /* safe_logger (spdlog::level::debug, "Host switched. Waiting 500ms before verification...");
     std::this_thread::sleep_for (std::chrono::milliseconds (500));
     
     unsigned char verification_buffer[1024]; // Read a larger chunk for better chance of finding a packet
@@ -105,7 +122,9 @@ int Cerelog_X8::prepare_session () {
         return (int)BrainFlowExitCodes::BOARD_NOT_READY_ERROR;
     }
 
-    safe_logger(spdlog::level::info, "Handshake successful and data stream verified.");
+    safe_logger(spdlog::level::info, "Handshake successful and data stream verified."); 
+    */
+    
     initialized = true;
     return (int)BrainFlowExitCodes::STATUS_OK;
 }
@@ -286,17 +305,21 @@ std::string Cerelog_X8::scan_for_device_port () {
     if (os == "Windows") {
         for (int i = 1; i <= 20; i++) { ports_to_try.push_back ("COM" + std::to_string (i)); }
     } else if (os == "Darwin") {
-        ports_to_try = {"/dev/cu.usbserial-110", "/dev/cu.usbserial-111", "/dev/cu.usbserial-112",
-            "/dev/cu.usbserial-10", "/dev/cu.usbserial-11", "/dev/cu.usbserial-12"};
+          ports_to_try = {"/dev/cu.usbserial-110", "/dev/cu.usbserial-111", "/dev/cu.usbserial-112",
+            "/dev/cu.usbserial-10", "/dev/cu.usbserial-11", "/dev/cu.usbserial-12",
+            "/dev/cu.usbserial-210", "/dev/cu.usbserial-211", "/dev/cu.usbserial-212",
+            "/dev/tty.usbserial-110", "/dev/tty.usbserial-111", "/dev/tty.usbserial-112",
+            "/dev/tty.usbserial-210", "/dev/tty.usbserial-211", "/dev/tty.usbserial-212"};
     } else if (os == "Linux") {
         ports_to_try = {"/dev/ttyUSB0", "/dev/ttyUSB1", "/dev/ttyUSB2", "/dev/ttyACM0",
             "/dev/ttyACM1", "/dev/ttyACM2"};
     }
 
-    for (size_t i = 0; i < ports_to_try.size(); ++i) {
-        const auto &port = ports_to_try[i];
+    for (const auto &port : ports_to_try)
+    {
         OSSerial test_serial (port.c_str ());
-        if (test_serial.open_serial_port () >= 0) {
+        if (test_serial.open_serial_port () >= 0)
+        {
             test_serial.close_serial_port ();
             safe_logger (spdlog::level::info, "Found available port: {}", port);
             return port;
