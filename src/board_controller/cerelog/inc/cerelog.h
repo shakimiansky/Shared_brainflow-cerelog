@@ -31,7 +31,8 @@ private:
     void read_thread ();
     double convert_counter_to_timestamp (uint64_t packet_counter);
     std::string scan_for_device_port ();
-
+    
+    double initial_host_timestamp; // Added for new timestamp method
 public:
     Cerelog_X8 (int board_id, struct BrainFlowInputParams params);
     int prepare_session ();

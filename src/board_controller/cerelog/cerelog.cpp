@@ -142,6 +142,8 @@ int Cerelog_X8::send_timestamp_handshake (uint8_t reg_addr, uint8_t reg_val) {
     uint32_t unix_timestamp = static_cast<uint32_t> (std::time (nullptr));
     if (unix_timestamp < 1600000000) { unix_timestamp = 1500000000; }
     
+    this->initial_host_timestamp = (double)unix_timestamp; // <-- ADD THIS LINE
+
     unsigned char packet[12];
     packet[0] = 0xAA; packet[1] = 0xBB; packet[2] = 0x02;
     packet[3] = (unix_timestamp >> 24) & 0xFF; packet[4] = (unix_timestamp >> 16) & 0xFF;
@@ -203,7 +205,7 @@ void Cerelog_X8::read_thread () {
             uint32_t board_timestamp = ((uint32_t)buffer[buffer_pos + 3] << 24) |
                 ((uint32_t)buffer[buffer_pos + 4] << 16) |
                 ((uint32_t)buffer[buffer_pos + 5] << 8) | (uint32_t)buffer[buffer_pos + 6];
-            package[timestamp_channel] = (double)board_timestamp;
+            package[timestamp_channel] = this->initial_host_timestamp + ((double)board_timestamp / 1000.0);
 
             for (int ch = 0; ch < 8; ++ch) {
                 int idx = buffer_pos + 7 + 3 + (ch * 3);
