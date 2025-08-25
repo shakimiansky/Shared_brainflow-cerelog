@@ -81,24 +81,39 @@ int Cerelog_X8::prepare_session () {
     
     
     
-    // This brief pause matches `time.sleep(0.1)` in Python after sending...actually make it 5 sec cause mac slow
-    std::this_thread::sleep_for (std::chrono::milliseconds (100));
+    // This brief pause matches `time.sleep(0.1)` in Python after sending...actually make it 2 sec cause mac slow
+   // Start with a large, safe value. You can tune it down later.
+    safe_logger(spdlog::level::info, "Handshake sent. Waiting 2 seconds for device to switch baud rate...");
+    std::this_thread::sleep_for (std::chrono::milliseconds (2000));
     
 
-    // Step 3: Switch the HOST to the higher baud rate
-    safe_logger (spdlog::level::info, "Switching host to target baud rate: {}", info.baudrate);
-    if (serial->set_custom_baudrate (info.baudrate) < 0) {
-        safe_logger (spdlog::level::err, "Failed to switch host to target baudrate.");
+    // old Step 3: Switch the HOST to the higher baud rate
+    // neww Step 3: Close and re-open the port to reset the macOS serial driver
+    safe_logger(spdlog::level::info, "Closing port to reset driver state before baud rate switch...");
+    serial->close_serial_port();
+    std::this_thread::sleep_for(std::chrono::milliseconds(200)); // Brief pause for OS
+
+    safe_logger(spdlog::level::info, "Re-opening port...");
+    if (serial->open_serial_port() < 0) {
+        safe_logger(spdlog::level::err, "Failed to re-open serial port for high-speed connection.");
+        return (int)BrainFlowExitCodes::UNABLE_TO_OPEN_PORT_ERROR;
+    }
+
+    safe_logger(spdlog::level::info, "Setting host to target baud rate: {}", info.baudrate);
+    if (serial->set_custom_baudrate(info.baudrate) < 0) {
+        safe_logger(spdlog::level::err, "Failed to set target baudrate on re-opened port.");
+        serial->close_serial_port();
         return (int)BrainFlowExitCodes::BOARD_WRITE_ERROR;
     }
 
 
     //Step 4: Wait, flush, and verify the stream (Matches `time.sleep(0.5)` and `ser.read(...)` in Python)
-    // this buffer flush was to replace below but didnt work serial->read_from_serial_port (new unsigned char[2048], 2048);
+    // this buffer flush was to replace below but didnt work 
+    //serial->read_from_serial_port (new unsigned char[2048], 2048);
     //tried to repace below code with above buffer flush but didnt work
 
     //above buffer flush replaces the fancy cerial verify cause mac fail 
-    /* safe_logger (spdlog::level::debug, "Host switched. Waiting 500ms before verification...");
+    safe_logger (spdlog::level::debug, "Host switched. Waiting 500ms before verification...");
     std::this_thread::sleep_for (std::chrono::milliseconds (500));
     
     unsigned char verification_buffer[1024]; // Read a larger chunk for better chance of finding a packet
@@ -123,7 +138,10 @@ int Cerelog_X8::prepare_session () {
     }
 
     safe_logger(spdlog::level::info, "Handshake successful and data stream verified."); 
-    */
+    
+
+
+
     
     initialized = true;
     return (int)BrainFlowExitCodes::STATUS_OK;

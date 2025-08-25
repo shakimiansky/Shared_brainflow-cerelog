@@ -73,7 +73,7 @@ def main():
 
         def on_close(event):
             print("Plot window closed, stopping stream...")
-            if board and board.is_streaming():
+            if board and board.is_prepared():
                 board.stop_stream()
                 board.release_session()
             print("Session released. Exiting.")
