@@ -78,91 +78,99 @@ def verify_packet(packet: bytes) -> bool:
     return calculated_checksum == received_checksum
 
 def run_standalone_diagnostic():
-    """Runs the full diagnostic test, designed to work reliably on its own."""
+    """
+    Runs the full diagnostic test, incorporating the robust connection logic
+    discovered during C++ driver development for macOS compatibility.
+    """
     port_name = find_serial_port()
     if not port_name:
         print("\n[FAIL] No serial ports found. Cannot run test.")
         return False
 
-    # --- Step 1: Connect and WAIT ---
-    print("\n--- STEP 1: Initial Connection ---")
-    print(f"[INFO] Opening port {port_name} at 9600 baud...")
+    ser = None # Initialize ser to None for the finally block
     try:
+        # --- Step 1: Connect, WAIT, and Send Handshake at 9600 ---
+        print("\n--- STEP 1: Initial Connection & Handshake ---")
+        print(f"[INFO] Opening port {port_name} at 9600 baud...")
         ser = serial.Serial(port_name, 9600, timeout=1.0)
-        # THIS IS THE MOST IMPORTANT STEP. It mimics the C++ driver's successful behavior.
-        # Opening the port resets the board. We MUST wait for it to boot.
         print("[INFO] Port opened. Waiting 5 seconds for board to reset and boot...")
         time.sleep(5)
-        print("[PASS] Initial connection successful.")
-    except serial.SerialException as e:
-        print(f"\n[FAIL] Could not open serial port: {e}")
-        return False
 
-    # --- Step 2: Persistent Handshake ---
-    print("\n--- STEP 2: Handshake and Baud Rate Negotiation ---")
-    # On Windows, BrainFlow defaults to 115200 (config 0x04) not 921600.
-    # Let's match that for a consistent test.
-    target_baud_rate = 115200
-    baud_config_val = 0x04
-
-    handshake_packet = create_handshake_packet(baud_config_val)
-    print(f"[INFO] Target baud rate for {platform.system()}: {target_baud_rate}")
-    print(f"[INFO] Sending a single, definitive handshake command...")
-
-    ser.write(handshake_packet)
-    time.sleep(0.2) # Give the board a moment to process the handshake and switch its baud rate.
-
-    print("[INFO] Handshake sent.")
-
-    # --- Step 3: Switch Host to High Speed ---
-    print("\n--- STEP 3: Reconfiguring Host to High Speed ---")
-    print(f"[INFO] Switching host to {target_baud_rate} baud...")
-    ser.baudrate = target_baud_rate
-    ser.reset_input_buffer()
-    print("[PASS] Host is now listening at high speed.")
-
-    # --- Step 4: Validate High-Speed Data ---
-    print("\n--- STEP 4: Validating High-Speed Data Stream ---")
-    buffer = bytearray()
-    found_packets = 0
-    start_time = time.time()
-    
-    print("[INFO] Listening for data for 5 seconds...")
-    while time.time() - start_time < 5:
-        if ser.in_waiting > 0:
-            buffer.extend(ser.read(ser.in_waiting))
+        target_baud_rate = 115200
+        baud_config_val = 0x04
+        handshake_packet = create_handshake_packet(baud_config_val)
         
-        while True:
-            start_index = buffer.find(START_MARKER_BYTES)
-            if start_index == -1 or len(buffer) < start_index + PACKET_TOTAL_SIZE:
-                break
+        print(f"[INFO] Sending handshake to switch device to {target_baud_rate} baud...")
+        ser.write(handshake_packet)
 
-            packet = buffer[start_index : start_index + PACKET_TOTAL_SIZE]
-            if verify_packet(packet):
-                found_packets += 1
-                if found_packets == 1:
-                    print(f"[SUCCESS] Received first valid high-speed data packet at {time.time() - start_time:.2f}s!")
-                buffer = buffer[start_index + PACKET_TOTAL_SIZE:]
-            else:
-                buffer = buffer[start_index + 1:]
+        # <<< FIX #1: THE DEVICE WAIT >>>
+        # We MUST wait for the device to process the command and switch its baud rate.
+        # 2 seconds is a safe, reliable delay.
+        print("[INFO] Handshake sent. Waiting 2 seconds for device to reconfigure...")
+        time.sleep(2)
+        
+        # --- Step 2: The macOS Driver Reset Strategy ---
+        print("\n--- STEP 2: Reconfiguring Host to High Speed (macOS Safe Method) ---")
+        
+        # <<< FIX #2: THE DRIVER RESET STRATEGY >>>
+        # We proved in C++ that changing baud rate on an open port hangs the macOS driver.
+        # The only reliable method is to close and re-open the port at the new speed.
+        print("[INFO] Closing port to reset driver state...")
+        ser.close()
+        time.sleep(0.2) # Brief pause for the OS to release the port handle
 
-    ser.close()
-    print("[INFO] Test finished. Serial port closed.")
+        print(f"[INFO] Re-opening port at new speed: {target_baud_rate} baud...")
+        ser = serial.Serial(port_name, target_baud_rate, timeout=1.0)
+        ser.reset_input_buffer()
+        print("[PASS] Host is now listening at high speed.")
 
-    # --- Step 5: Final Results ---
+        # --- Step 3: Validate High-Speed Data ---
+        print("\n--- STEP 3: Validating High-Speed Data Stream ---")
+        buffer = bytearray()
+        found_packets = 0
+        start_time = time.time()
+        
+        print("[INFO] Listening for data for 5 seconds...")
+        # Main validation loop remains the same
+        while time.time() - start_time < 5:
+            if ser.in_waiting > 0:
+                buffer.extend(ser.read(ser.in_waiting))
+            
+            while True:
+                start_index = buffer.find(START_MARKER_BYTES)
+                if start_index == -1 or len(buffer) < start_index + PACKET_TOTAL_SIZE:
+                    break
+
+                packet = buffer[start_index : start_index + PACKET_TOTAL_SIZE]
+                if verify_packet(packet):
+                    found_packets += 1
+                    if found_packets == 1:
+                        print(f"[SUCCESS] Received first valid high-speed data packet at {time.time() - start_time:.2f}s!")
+                    buffer = buffer[start_index + PACKET_TOTAL_SIZE:]
+                else:
+                    buffer = buffer[start_index + 1:]
+
+    except serial.SerialException as e:
+        print(f"\n[FAIL] A serial port error occurred: {e}")
+        return False
+    finally:
+        if ser and ser.is_open:
+            ser.close()
+            print("[INFO] Test finished. Serial port closed.")
+
+    # --- Step 4: Final Results ---
     print("\n" + "="*40)
     print("=== FINAL RESULTS ===")
-    duration = time.time() - start_time
     if found_packets > 0:
-        rate = found_packets / duration
+        # Measure duration only over the 5-second listening window
+        rate = found_packets / 5.0
         print(f"[SUCCESS] Test PASSED!")
         print(f"   - Found {found_packets} valid packets.")
-        print(f"   - Measured data rate: {rate:.1f} packets/sec (Expected: ~500)")
+        print(f"   - Measured data rate: ~{rate:.1f} packets/sec (Expected: ~500)")
         return True
     else:
         print("[FAIL] Test FAILED.")
         print("   - No valid data packets were received at the high baud rate.")
-        print("   - This indicates a persistent failure in the handshake or data generation.")
         return False
 
 if __name__ == "__main__":

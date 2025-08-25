@@ -54,101 +54,88 @@ def send_handshake_packet(ser, reg_addr=0x01, reg_val=0x05):
     return True
 
 def test_handshake():
-    """Test the handshake process manually"""
+    """Test the handshake process with the correct timing for macOS."""
     
     # Determine port and baud rates
     if platform.system() == 'Darwin':  # macOS
-        port_name = '/dev/cu.usbserial-10'
-        initial_baud = 9600
-        target_baud = 115000
+        port_name = '/dev/cu.usbserial-110' # IMPORTANT: Make sure this is your actual port name
     elif platform.system() == 'Windows':
-        port_name = 'COM4'
-        initial_baud = 9600
-        target_baud = 115000
+        port_name = 'COM4' # IMPORTANT: Make sure this is your actual port name
     else:
         port_name = '/dev/ttyUSB0'
-        initial_baud = 9600
-        target_baud = 115000
+
+    initial_baud = 9600
+    target_baud = 115200 # NOTE: The original test had a typo (115000). Use the standard 115200.
     
-    print(f"[TEST] Manual Handshake Test")
-    print(f"[INFO] Platform: {platform.system()}")
-    print(f"[INFO] Port: {port_name}")
-    print(f"[INFO] Initial baud: {initial_baud}")
-    print(f"[INFO] Target baud: {target_baud}")
+    # This should match the baud_config_val sent in the handshake
+    # 0x04 = 115200, 0x05 = 230400
+    baud_config_val_to_send = 0x04 
+
+    print(f"[TEST] Manual Handshake Test (macOS Corrected)")
+    print(f"[INFO] Port: {port_name}, Initial Baud: {initial_baud}, Target Baud: {target_baud}")
     print("-" * 50)
     
+    ser = None
     try:
-        # Step 1: Connect at initial baud rate
-        print(f"[STEP1] Connecting at {initial_baud} baud...")
+        # Step 1: Connect and WAIT for the board to boot
+        print(f"[STEP 1] Connecting at {initial_baud} baud...")
         ser = serial.Serial(port_name, initial_baud, timeout=1.0)
+        
+        # <<< FIX #1: THE CRITICAL 5-SECOND BOOT WAIT >>>
+        # Opening the port resets the board. We MUST wait for it to be ready.
+        print("[INFO] Port opened. Waiting 5 seconds for board to boot...")
+        time.sleep(5)
         print(f"[SUCCESS] Connected to {ser.name}")
         
-        # Clear any existing data
-        ser.reset_input_buffer()
-        ser.reset_output_buffer()
-        time.sleep(0.1)
-        
         # Step 2: Send handshake packet
-        print(f"\n[STEP2] Sending handshake packet...")
-        if not send_handshake_packet(ser, reg_addr=0x01, reg_val=0x05):  # 0x05 = 230400 baud
+        print(f"\n[STEP 2] Sending handshake packet...")
+        if not send_handshake_packet(ser, reg_addr=0x01, reg_val=baud_config_val_to_send):
             ser.close()
             return False
         
-        # Step 3: Wait for response
-        print(f"\n[STEP3] Waiting for response...")
-        time.sleep(0.2)  # Wait for response
+        # <<< FIX #2: THE CRITICAL DEVICE RECONFIGURATION WAIT >>>
+        # We must give the board time to process the command and switch its baud rate.
+        print("[INFO] Handshake sent. Waiting 2 seconds for device to reconfigure...")
+        time.sleep(2)
         
-        # Check for response
-        if ser.in_waiting > 0:
-            response = ser.read(ser.in_waiting)
-            print(f"[RESPONSE] Got {len(response)} bytes: {response.hex()}")
-            
-            # Check for "OK" response
-            if b'OK' in response:
-                print(f"[SUCCESS] Received 'OK' response!")
-            else:
-                print(f"[WARNING] No 'OK' response found")
-        else:
-            print(f"[WARNING] No response received")
-        
-        # Step 4: Switch to target baud rate
-        print(f"\n[STEP4] Switching to {target_baud} baud...")
+        # Step 3: Switch host to target baud rate using the "close and re-open" method
+        print(f"\n[STEP 3] Switching host to {target_baud} baud...")
         ser.close()
-        time.sleep(0.1)
+        time.sleep(0.2) # Brief pause for OS to release the port
         
         ser = serial.Serial(port_name, target_baud, timeout=1.0)
         ser.reset_input_buffer()
-        ser.reset_output_buffer()
-        time.sleep(0.1)
+        print("[SUCCESS] Host reconnected at new baud rate.")
         
-        # Step 5: Check for data at new baud rate
-        print(f"\n[STEP5] Checking for data at {target_baud} baud...")
+        # Step 4: Check for data at the new baud rate
+        print(f"\n[STEP 4] Checking for data at {target_baud} baud for 3 seconds...")
         data_count = 0
         start_time = time.time()
         
-        while time.time() - start_time < 3:  # Check for 3 seconds
+        while time.time() - start_time < 3:
             if ser.in_waiting > 0:
                 data = ser.read(ser.in_waiting)
                 data_count += len(data)
-                print(f"[DATA] Got {len(data)} bytes: {data[:16].hex()}")
-            time.sleep(0.1)
+                # Only print the first chunk of data to avoid spamming the console
+                if data_count == len(data):
+                    print(f"[DATA] Received first chunk of {len(data)} bytes: {data[:20].hex()}...")
+            time.sleep(0.01) # Small sleep to prevent busy-waiting
         
         if data_count > 0:
-            print(f"[SUCCESS] Received {data_count} bytes at {target_baud} baud!")
+            print(f"\n[SUCCESS] Received a total of {data_count} bytes at {target_baud} baud!")
             print(f"[SUCCESS] Handshake and baud rate switching worked!")
         else:
-            print(f"[ERROR] No data received at {target_baud} baud")
-            print(f"[INFO] Board might not have switched baud rates properly")
+            print(f"\n[ERROR] No data received at {target_baud} baud.")
+            print(f"[INFO] This indicates the handshake failed.")
         
-        ser.close()
         return data_count > 0
         
     except serial.SerialException as e:
         print(f"[ERROR] Serial error: {e}")
         return False
-    except Exception as e:
-        print(f"[ERROR] Unexpected error: {e}")
-        return False
+    finally:
+        if ser and ser.is_open:
+            ser.close()
 
 if __name__ == "__main__":
     success = test_handshake()
