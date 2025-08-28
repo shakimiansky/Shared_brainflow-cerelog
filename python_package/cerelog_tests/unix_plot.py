@@ -13,18 +13,19 @@ Y_AXIS_PADDING_FACTOR = 1.2
 # --- Global variables ---
 board = None
 eeg_channels = []
-timestamp_channel = -1 ## <-- MODIFIED: Added to store the timestamp channel index
+timestamp_channel = -1
 sampling_rate = 0
 window_size = 0
 data_buffer = np.array([])
 y_limits = {}
+start_time = 0.0 # This will hold the timestamp of the very first sample
 
 def main():
     """
     Connects to the Cerelog board and creates a robust, real-time, scrolling plot
     that uses the REAL board timestamps for the X-axis.
     """
-    global board, eeg_channels, timestamp_channel, sampling_rate, window_size, data_buffer, y_limits
+    global board, eeg_channels, timestamp_channel, sampling_rate, window_size, data_buffer, y_limits, start_time
 
     params = BrainFlowInputParams()
     params.timeout = 15
@@ -32,7 +33,7 @@ def main():
 
     try:
         eeg_channels = BoardShim.get_eeg_channels(BOARD_ID)
-        timestamp_channel = BoardShim.get_timestamp_channel(BOARD_ID) ## <-- MODIFIED: Get the timestamp channel
+        timestamp_channel = BoardShim.get_timestamp_channel(BOARD_ID)
         sampling_rate = BoardShim.get_sampling_rate(BOARD_ID)
         window_size = SECONDS_TO_DISPLAY * sampling_rate
 
@@ -44,21 +45,23 @@ def main():
 
         print("\nStarting stream... Close the plot window to stop.")
 
-        buffer_size_samples = 2 * 60 * sampling_rate 
+        buffer_size_samples = 5 * 60 * sampling_rate
         board.start_stream(buffer_size_samples)
 
         time.sleep(2)
 
         initial_data = board.get_board_data()
-        if initial_data.size > 0:
+        if initial_data.shape[1] > 0:
             data_buffer = initial_data
+            start_time = data_buffer[timestamp_channel, 0]
         else:
             num_board_channels = BoardShim.get_num_rows(BOARD_ID)
             data_buffer = np.empty((num_board_channels, 0))
 
+
         # --- Plot Setup ---
         fig, axes = plt.subplots(4, 2, figsize=(18, 10), sharex=True)
-        fig.suptitle('Real-Time Cerelog EEG Waveforms (Using REAL Timestamps)', fontsize=16) ## <-- MODIFIED: Title
+        fig.suptitle('Real-Time Cerelog EEG Waveforms (Correct Scaling)', fontsize=16)
         axes_flat = axes.flatten()
         lines = [ax.plot([], [], lw=1)[0] for ax in axes_flat]
 
@@ -66,9 +69,8 @@ def main():
             ax.set_title(f'Channel {eeg_channels[i]}')
             ax.set_ylabel('Voltage (µV)')
             ax.grid(True)
-            # We no longer set X-limits here, as they will be dynamic based on timestamps
 
-        fig.text(0.5, 0.04, 'Time (s, relative to start)', ha='center', va='center') ## <-- MODIFIED: X-axis label
+        fig.text(0.5, 0.04, 'Time (Seconds since start)', ha='center', va='center')
         plt.tight_layout(rect=[0, 0.05, 1, 0.96])
 
         def on_close(event):
@@ -92,53 +94,51 @@ def main():
 def update_plot(frame, lines, axes):
     """
     This function is called periodically to update the plot data.
-    This version now uses the REAL board timestamps.
     """
-    global data_buffer, y_limits
+    global data_buffer, y_limits, start_time
 
     try:
-        num_samples_available = board.get_board_data_count()
-
-        if num_samples_available > 0:
-            new_data = board.get_board_data(num_samples_available)
-            print(f"Received {new_data.shape[1]} new samples. Total buffer size: {data_buffer.shape[1]}")
-            data_buffer = np.hstack((data_buffer, new_data))
-        else:
+        new_data = board.get_board_data()
+        if new_data.shape[1] == 0:
             return lines
 
-        buffer_limit = int(window_size * 1.5) 
+        data_buffer = np.hstack((data_buffer, new_data))
+
+        buffer_limit = int(window_size * 2)
         if data_buffer.shape[1] > buffer_limit:
             data_buffer = data_buffer[:, -buffer_limit:]
+            
+        if start_time == 0.0 and data_buffer.shape[1] > 0:
+            start_time = data_buffer[timestamp_channel, 0]
+            return lines
 
         plot_data = data_buffer[:, -window_size:]
         
-        if plot_data.shape[1] < window_size:
+        if plot_data.shape[1] < 2:
             return lines
 
-        ## --- MODIFICATION START ---
-        # Get the real EEG and Timestamp data
+        # --- VERTICAL SCALE CORRECTION ---
+        # The Cerelog board returns data in Volts. To display it as
+        # microvolts (uV), we must multiply by 1,000,000 (1e6).
         eeg_plot_data = plot_data[eeg_channels] * 1e6
+        # --- END CORRECTION ---
+        
         timestamps = plot_data[timestamp_channel]
         
-        # Create a relative time vector for a clean plot starting near 0
-        # This makes the X-axis show "seconds since start" instead of a huge Unix time
-        relative_time_vector = timestamps - timestamps[0]
-        ## --- MODIFICATION END ---
-
-
+        # Correct the timestamp from kiloseconds to seconds
+        relative_time_vector = (timestamps - start_time) * 1000.0
+        
         # Update each subplot
         for i, (line, ax) in enumerate(zip(lines, axes)):
             channel_data = eeg_plot_data[i]
             
             centered_data = channel_data - np.mean(channel_data)
             
-            ## <-- MODIFIED: Use the real time vector
             line.set_data(relative_time_vector, centered_data)
 
-            # Update the X-axis limits to scroll with the new time data
             ax.set_xlim(relative_time_vector[0], relative_time_vector[-1])
 
-            # Adaptive Y-Axis Logic (unchanged)
+            # Adaptive Y-Axis Logic
             max_val = np.max(centered_data)
             min_val = np.min(centered_data)
             if np.isclose(max_val, min_val):
