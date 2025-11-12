@@ -114,8 +114,8 @@ def update_plot(frame, lines, axes):
                 # 1. Apply a STABLE 2nd-order low-pass filter. This is crucial for real-time processing.
                 DataFilter.perform_lowpass(eeg_plot_data[i], sampling_rate, 100.0, 2, FilterTypes.BUTTERWORTH, 0)
                 
-                # 2. Apply the band-stop (notch) filter for 50 Hz noise.
-                center_freq = 50.0
+                # 2. Apply the band-stop (notch) filter for 60 Hz noise.
+                center_freq = 60.0
                 bandwidth = 4.0
                 start_freq = center_freq - (bandwidth / 2.0)
                 stop_freq = center_freq + (bandwidth / 2.0)

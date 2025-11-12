@@ -95,8 +95,8 @@ def update_game(n, state):
         if eeg_data.size > 20:
             # Stable Low-pass filter
             DataFilter.perform_lowpass(eeg_data, sampling_rate, 100.0, 2, FilterTypes.BUTTERWORTH, 0)
-            # 50 Hz Notch filter
-            center_freq = 50.0
+            # 60 Hz Notch filter
+            center_freq = 60.0
             bandwidth = 4.0
             start_freq = center_freq - (bandwidth / 2.0)
             stop_freq = center_freq + (bandwidth / 2.0)
