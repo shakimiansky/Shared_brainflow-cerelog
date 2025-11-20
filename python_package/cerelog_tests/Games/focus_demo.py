@@ -2,7 +2,7 @@ import time
 from collections import deque
 import numpy as np
 from dash.exceptions import PreventUpdate
-
+import enum 
 # --- BrainFlow and Machine Learning Imports ---
 from brainflow.board_shim import BoardShim, BrainFlowInputParams, BoardIds
 from brainflow.data_filter import DataFilter, FilterTypes
@@ -13,6 +13,12 @@ import plotly.graph_objs as go
 from dash import Dash, dcc, html, Output, Input, State
 import logging
 
+class DetrendOperations(enum.IntEnum):
+    """Enum to store all supported detrend options"""
+
+    NO_DETREND = 0  #:
+    CONSTANT = 1  #:
+    LINEAR = 2  #:
 # ==============================================================================
 # === 1. TUNABLE CONFIGURATION ===============================================
 # ==============================================================================
@@ -104,6 +110,9 @@ def update_game(n, state):
         # ------------------ END OF EXACT REPLICATION ------------------
 
         DataFilter.perform_bandpass(eeg_data, sampling_rate, FILTER_LOW_CUT_HZ, FILTER_HIGH_CUT_HZ, FILTER_ORDER, FilterTypes.BUTTERWORTH, 0)
+        DataFilter.detrend(eeg_data, DetrendOperations.CONSTANT.value)
+
+        
         
         if np.isnan(eeg_data).any():
             print(f"Warning: NaN detected in channel {ch_idx} after filtering. Skipping update.")

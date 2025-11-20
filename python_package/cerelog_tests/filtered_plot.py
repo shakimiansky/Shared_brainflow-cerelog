@@ -1,9 +1,18 @@
 import time
+import enum
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from brainflow.board_shim import BoardShim, BrainFlowInputParams, BoardIds, BrainFlowError
 from brainflow.data_filter import DataFilter, FilterTypes
+
+
+class DetrendOperations(enum.IntEnum):
+    """Enum to store all supported detrend options"""
+
+    NO_DETREND = 0  #:
+    CONSTANT = 1  #:
+    LINEAR = 2  #:
 
 # --- Configuration ---
 BOARD_ID = BoardIds.CERELOG_X8_BOARD
@@ -114,6 +123,7 @@ def update_plot(frame, lines, axes):
                 # 1. Apply a STABLE 2nd-order low-pass filter. This is crucial for real-time processing.
                 DataFilter.perform_lowpass(eeg_plot_data[i], sampling_rate, 100.0, 2, FilterTypes.BUTTERWORTH, 0)
                 
+
                 # 2. Apply the band-stop (notch) filter for 60 Hz noise.
                 center_freq = 60.0
                 bandwidth = 4.0
@@ -121,7 +131,7 @@ def update_plot(frame, lines, axes):
                 stop_freq = center_freq + (bandwidth / 2.0)
                 
                 DataFilter.perform_bandstop(eeg_plot_data[i], sampling_rate, start_freq, stop_freq, 3, FilterTypes.BUTTERWORTH, 0)
-
+                DataFilter.detrend(eeg_plot_data[i], DetrendOperations.CONSTANT.value)
         # --- Manual Time Axis Generation (for True Scrolling) ---
         time_vector_full_window = np.linspace(-SECONDS_TO_DISPLAY, 0, window_size)
         time_vector_for_plot = time_vector_full_window[-num_points:]

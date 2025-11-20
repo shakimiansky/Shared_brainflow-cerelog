@@ -13,6 +13,7 @@ UPDATES:
 
 import argparse
 import time
+import enum 
 from dataclasses import dataclass
 from typing import List, Optional
 
@@ -28,6 +29,14 @@ from psychopy import visual, core, event
 # SciPy for analysis
 from scipy.signal import welch
 
+
+
+class DetrendOperations(enum.IntEnum):
+    """Enum to store all supported detrend options"""
+
+    NO_DETREND = 0  #:
+    CONSTANT = 1  #:
+    LINEAR = 2  #:
 
 # --- HARDCODED BOARD CONFIGURATION ---
 BOARD_ID = BoardIds.CERELOG_X8_BOARD  # Corrected board ID
@@ -116,7 +125,7 @@ def analyze_data_chunk(data_chunk: np.ndarray, sr: float, freqs: List[float]) ->
         start_freq = center_freq - (band_width / 2.0)
         stop_freq = center_freq + (band_width / 2.0)
         DataFilter.perform_bandstop(eeg_data[i], int(sr), start_freq, stop_freq, 3, FilterTypes.BUTTERWORTH, 0)
-
+        DataFilter.detrend(eeg_data[i], DetrendOperations.CONSTANT.value)
     mean_eeg = np.mean(eeg_data, axis=0)
     
     nperseg = min(len(mean_eeg), int(2*sr))
