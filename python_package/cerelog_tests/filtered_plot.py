@@ -1,19 +1,10 @@
 import time
-import enum
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from brainflow.board_shim import BoardShim, BrainFlowInputParams, BoardIds, BrainFlowError
 from brainflow.data_filter import DataFilter, FilterTypes
-
-
-class DetrendOperations(enum.IntEnum):
-    """Enum to store all supported detrend options"""
-
-    NO_DETREND = 0  #:
-    CONSTANT = 1  #:
-    LINEAR = 2  #:
-
+from brainflow.data_filter import NoiseTypes, DetrendOperations, AggOperations, WaveletTypes, NoiseEstimationLevelTypes, WaveletExtensionTypes, ThresholdTypes, WaveletDenoisingTypes
 # --- Configuration ---
 BOARD_ID = BoardIds.CERELOG_X8_BOARD
 SECONDS_TO_DISPLAY = 10
@@ -119,19 +110,26 @@ def update_plot(frame, lines, axes):
         for i in range(len(eeg_channels)):
             # Use a safe data length check for the filters
             if eeg_plot_data[i].size > 20: 
-                
-                # 1. Apply a STABLE 2nd-order low-pass filter. This is crucial for real-time processing.
-                DataFilter.perform_lowpass(eeg_plot_data[i], sampling_rate, 100.0, 2, FilterTypes.BUTTERWORTH, 0)
-                
-
-                # 2. Apply the band-stop (notch) filter for 60 Hz noise.
-                center_freq = 60.0
-                bandwidth = 4.0
-                start_freq = center_freq - (bandwidth / 2.0)
-                stop_freq = center_freq + (bandwidth / 2.0)
-                
-                DataFilter.perform_bandstop(eeg_plot_data[i], sampling_rate, start_freq, stop_freq, 3, FilterTypes.BUTTERWORTH, 0)
+                #1 Detrend to get dc offset away
                 DataFilter.detrend(eeg_plot_data[i], DetrendOperations.CONSTANT.value)
+                # 2. Apply a STABLE 4nd-order low-pass 100hz. This is crucial for real-time processing.
+                DataFilter.perform_lowpass(eeg_plot_data[i], sampling_rate, 100.0, 4, FilterTypes.BUTTERWORTH, 0)
+                
+                # 3. Apply the band-stop (notch) filter for 50, 60 Hz noise.
+                DataFilter.perform_bandstop(eeg_plot_data[i], sampling_rate, 48, 52, 3, FilterTypes.BUTTERWORTH, 0)
+                DataFilter.perform_bandstop(eeg_plot_data[i], sampling_rate, 58, 62, 3, FilterTypes.BUTTERWORTH, 0)
+                
+                #4 High Pass above 0.5 Hz
+                DataFilter.perform_highpass(eeg_plot_data[i], sampling_rate, 0.5, 4, FilterTypes.BUTTERWORTH, 0)
+                
+                #5. More cleaning data up
+                #DataFilter.perform_rolling_filter(eeg_plot_data[i], 3, AggOperations.MEAN.value)
+                DataFilter.perform_rolling_filter(eeg_plot_data[i], 3, AggOperations.MEDIAN.value)
+                # (This is redundant notch) DataFilter.remove_environmental_noise(eeg_plot_data[i], sampling_rate, NoiseTypes.FIFTY_AND_SIXTY.value)
+                #DataFilter.perform_wavelet_denoising(eeg_plot_data[i], WaveletTypes.BIOR3_9, 3,
+                                                # WaveletDenoisingTypes.SURESHRINK, ThresholdTypes.HARD,
+                                                # WaveletExtensionTypes.SYMMETRIC, NoiseEstimationLevelTypes.FIRST_LEVEL)
+                
         # --- Manual Time Axis Generation (for True Scrolling) ---
         time_vector_full_window = np.linspace(-SECONDS_TO_DISPLAY, 0, window_size)
         time_vector_for_plot = time_vector_full_window[-num_points:]
@@ -149,7 +147,7 @@ def update_plot(frame, lines, axes):
             line.set_data(time_vector_for_plot, centered_data)
             
             # --- Adaptive Y-Axis Logic ---
-            # Define how many recent samples to use for auto-scaling (last 4.0 seconds)
+            # Define how many recent samples to use for auto-scaling (last 4 seconds)
             samples_for_scaling = int(4.0 * sampling_rate)
             recent_data = centered_data[-samples_for_scaling:]
             
