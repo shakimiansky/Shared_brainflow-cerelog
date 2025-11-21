@@ -9,9 +9,10 @@ import logging
 
 # --- BrainFlow Integration ---
 from brainflow.board_shim import BoardShim, BrainFlowInputParams, BoardIds, BrainFlowError
+from brainflow.data_filter import DataFilter, FilterTypes, NoiseTypes, DetrendOperations, AggOperations
 
 # --- Signal Processing & Machine Learning Libraries ---
-from scipy.signal import butter, lfilter, detrend
+# (Removed unused Scipy imports like butter, lfilter)
 from sklearn.cross_decomposition import CCA as SklearnCCA
 
 # ==============================================================================
@@ -33,9 +34,12 @@ FFT_OVERLAP_PERCENT = 0.8
 USE_EMA_SMOOTHING = True
 EMA_SMOOTHING_FACTOR = 0.4
 BCI_SCORE_AMPLIFIER = 2.5
-FILTER_LOW_CUT_HZ = 5.0
-FILTER_HIGH_CUT_HZ = 45.0
-FILTER_ORDER = 5
+
+# NOTE: These now control the BrainFlow filters directly
+FILTER_LOW_CUT_HZ = 5.0   # Highpass cutoff (removes frequencies BELOW this)
+FILTER_HIGH_CUT_HZ = 45.0 # Lowpass cutoff (removes frequencies ABOVE this)
+FILTER_ORDER = 4          # BrainFlow usually works best with order 4 for Butterworth
+
 CCA_NUM_HARMONICS = 3
 CALIBRATION_DURATION_S = 7
 CALIBRATION_THRESHOLD_STD_FACTOR = 0.8
@@ -50,23 +54,47 @@ PADDLE_HEIGHT = 20
 BALL_RADIUS = 10
 
 # ==============================================================================
-# === 2. CORE SETUP (MODIFIED FOR BRAINFLOW) ===================================
+# === 2. CORE SETUP ============================================================
 # ==============================================================================
 board = None
 sampling_rate = 0
 bci_eeg_channels = []
 fft_samples = 0
-b_bandpass, a_bandpass = [], []
 cca_ref_signals = {}
 cca_model = SklearnCCA(n_components=1)
 
 BCI_UPDATE_INTERVAL_MS = int((FFT_WINDOW_SECONDS * (1 - FFT_OVERLAP_PERCENT)) * 1000)
 
 def preprocess_eeg_window(eeg_data):
-    if eeg_data.ndim == 1: eeg_data = eeg_data.reshape(-1, 1)
-    eeg_detrended = detrend(eeg_data, axis=0)
-    eeg_filtered = lfilter(b_bandpass, a_bandpass, eeg_detrended, axis=0)
-    return eeg_filtered
+    """
+    Applies the BrainFlow specific filtering pipeline using global config settings.
+    """
+    if eeg_data.ndim == 1: 
+        eeg_data = eeg_data.reshape(-1, 1)
+    
+    # Work on a contiguous copy to ensure C-compatibility
+    data_to_process = np.ascontiguousarray(eeg_data.T) 
+    n_channels = data_to_process.shape[0]
+
+    for i in range(n_channels):
+        if data_to_process[i].size > 20:
+            # 1. Detrend (Center at 0)
+            DataFilter.detrend(data_to_process[i], DetrendOperations.CONSTANT.value)
+            
+            # 2. Low-Pass (Remove High Freq Noise) using FILTER_HIGH_CUT_HZ (e.g., 45Hz)
+            DataFilter.perform_lowpass(data_to_process[i], sampling_rate, float(FILTER_HIGH_CUT_HZ), FILTER_ORDER, FilterTypes.BUTTERWORTH.value, 0)
+            
+            # 3. High-Pass (Remove Low Freq Drift) using FILTER_LOW_CUT_HZ (e.g., 5Hz)
+            DataFilter.perform_highpass(data_to_process[i], sampling_rate, float(FILTER_LOW_CUT_HZ), FILTER_ORDER, FilterTypes.BUTTERWORTH.value, 0)
+
+            # 4. Notch Filters (Grid Noise) - Kept hardcoded as grid noise is always 50/60Hz
+            DataFilter.perform_bandstop(data_to_process[i], sampling_rate, 48.0, 52.0, 3, FilterTypes.BUTTERWORTH.value, 0)
+            DataFilter.perform_bandstop(data_to_process[i], sampling_rate, 58.0, 62.0, 3, FilterTypes.BUTTERWORTH.value, 0)
+            
+            # 5. Rolling Median (Smoothing)
+            DataFilter.perform_rolling_filter(data_to_process[i], 3, AggOperations.MEDIAN.value)
+
+    return data_to_process.T
 
 def get_cca_correlation(eeg_data_multi_channel, ref_signals):
     if eeg_data_multi_channel.shape[0] < eeg_data_multi_channel.shape[1] or eeg_data_multi_channel.shape[0] != ref_signals.shape[0]: return 0.0
@@ -79,7 +107,6 @@ def get_cca_correlation(eeg_data_multi_channel, ref_signals):
 # ==============================================================================
 # === 3. DASH APP LAYOUT =======================================================
 # ==============================================================================
-# --- THIS IS THE CORRECTED LINE ---
 app = Dash(__name__, assets_folder='assets')
 app.title = "BrainFlow BCI Pong"
 
@@ -111,7 +138,7 @@ app.layout = html.Div(id='main-container', style={'backgroundColor': '#111', 'co
 ])
 
 # ==============================================================================
-# === 4. CLIENTSIDE CALLBACKS (Unchanged) ======================================
+# === 4. CLIENTSIDE CALLBACKS ==================================================
 # ==============================================================================
 clientside_callback(
     """ function(n_intervals) {
@@ -150,7 +177,7 @@ clientside_callback(
 )
 
 # ==============================================================================
-# === 5. CORE BCI & GAME LOGIC CALLBACKS (Unchanged from last version) =========
+# === 5. CORE BCI & GAME LOGIC CALLBACKS =======================================
 # ==============================================================================
 @app.callback(
     Output('bci-command-store', 'data'),
@@ -231,7 +258,7 @@ def update_game_physics(_, state, bci_command, app_status, key_data):
     return state
 
 # ==============================================================================
-# === 6. STATE MACHINE AND FEEDBACK PLOTS (Unchanged) ==========================
+# === 6. STATE MACHINE AND FEEDBACK PLOTS ======================================
 # ==============================================================================
 @app.callback(
     Output('status-display', 'children'),
@@ -320,10 +347,10 @@ def update_feedback_plots(_, bci_command, cal_data):
     return psd_fig, control_fig
 
 # ==============================================================================
-# === 7. MAIN EXECUTION (Unchanged) ============================================
+# === 7. MAIN EXECUTION ========================================================
 # ==============================================================================
 def main():
-    global board, sampling_rate, bci_eeg_channels, fft_samples, b_bandpass, a_bandpass, cca_ref_signals
+    global board, sampling_rate, bci_eeg_channels, fft_samples, cca_ref_signals
     params = BrainFlowInputParams(); params.timeout = 15
     board = BoardShim(BOARD_ID, params)
     try:
@@ -333,16 +360,15 @@ def main():
         bci_eeg_channels = all_eeg_channels[:len(CHANNELS_TO_USE)]
         fft_samples = int(sampling_rate * FFT_WINDOW_SECONDS)
         print(f"Board connected. Sampling Rate: {sampling_rate} Hz"); print(f"Using EEG Channels: {bci_eeg_channels} for BCI")
-        def butter_bandpass(lowcut, highcut, fs, order=5):
-            nyq = 0.5 * fs; low = lowcut / nyq; high = highcut / nyq
-            b, a = butter(order, [low, high], btype='band'); return b, a
-        b_bandpass, a_bandpass = butter_bandpass(FILTER_LOW_CUT_HZ, FILTER_HIGH_CUT_HZ, sampling_rate, order=FILTER_ORDER)
+        
+        # --- PREPARE REFERENCE SIGNALS FOR CCA ---
         time_points = np.arange(0, FFT_WINDOW_SECONDS, 1.0 / sampling_rate)[:fft_samples]
         for freq in [SSVEP_FREQ_LEFT, SSVEP_FREQ_RIGHT]:
             refs = [];
             for h in range(1, CCA_NUM_HARMONICS + 1):
                 refs.append(np.sin(2 * np.pi * h * freq * time_points)); refs.append(np.cos(2 * np.pi * h * freq * time_points))
             cca_ref_signals[freq] = np.array(refs).T
+            
         print("Starting data stream..."); board.start_stream(450000); time.sleep(FFT_WINDOW_SECONDS)
         log = logging.getLogger('werkzeug'); log.setLevel(logging.ERROR)
         print("\nDash server is running. Open http://127.0.0.1:8050/ in your browser.")
