@@ -118,14 +118,27 @@ def analyze_data_chunk(data_chunk: np.ndarray, sr: float, freqs: List[float]) ->
     eeg_data = data_chunk[eeg_channels_to_use, :]
     
     for i in range(eeg_data.shape[0]):
-        DataFilter.perform_lowpass(eeg_data[i], int(sr), 100.0, 2, FilterTypes.BUTTERWORTH, 0)
         
-        center_freq = 60.0
-        band_width = 4.0
-        start_freq = center_freq - (band_width / 2.0)
-        stop_freq = center_freq + (band_width / 2.0)
-        DataFilter.perform_bandstop(eeg_data[i], int(sr), start_freq, stop_freq, 3, FilterTypes.BUTTERWORTH, 0)
-        DataFilter.detrend(eeg_data[i], DetrendOperations.CONSTANT.value)
+        #1 Detrend to get dc offset away
+        DataFilter.detrend(eg_data[i], DetrendOperations.CONSTANT.value)
+        # 2. Apply a STABLE 4nd-order low-pass 100hz. This is crucial for real-time processing.
+        DataFilter.perform_lowpass(eg_data[i], sampling_rate, 100.0, 4, FilterTypes.BUTTERWORTH, 0)
+        
+        # 3. Apply the band-stop (notch) filter for 50, 60 Hz noise.
+        DataFilter.perform_bandstop(eg_data[i], sampling_rate, 48, 52, 3, FilterTypes.BUTTERWORTH, 0)
+        DataFilter.perform_bandstop(eeg_data[i], sampling_rate, 58, 62, 3, FilterTypes.BUTTERWORTH, 0)
+        
+        #4 High Pass above 0.5 Hz
+        DataFilter.perform_highpass(eg_data[i], sampling_rate, 0.5, 4, FilterTypes.BUTTERWORTH, 0)
+        
+        #5. More cleaning data up
+        #DataFilter.perform_rolling_filter(eeg_plot_data[i], 3, AggOperations.MEAN.value)
+        DataFilter.perform_rolling_filter(eeg_data[i], 3, AggOperations.MEDIAN.value)
+
+
+
+
+
     mean_eeg = np.mean(eeg_data, axis=0)
     
     nperseg = min(len(mean_eeg), int(2*sr))

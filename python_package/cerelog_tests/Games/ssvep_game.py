@@ -10,6 +10,10 @@ from dash import Dash, dcc, html, Output, Input, State
 # --- BrainFlow BCI Configuration ---
 from brainflow.board_shim import BoardShim, BrainFlowInputParams, BoardIds, BrainFlowError
 from brainflow.data_filter import DataFilter, FilterTypes
+from brainflow.data_filter import NoiseTypes, DetrendOperations, AggOperations, WaveletTypes, NoiseEstimationLevelTypes, WaveletExtensionTypes, ThresholdTypes, WaveletDenoisingTypes
+
+
+
 
 # Use the same board ID from the plotter script
 BOARD_ID = BoardIds.CERELOG_X8_BOARD 
@@ -93,15 +97,29 @@ def update_game(n, state):
 
         # --- APPLY FILTERS FROM PLOTTER SCRIPT ---
         if eeg_data.size > 20:
-            # Stable Low-pass filter
-            DataFilter.perform_lowpass(eeg_data, sampling_rate, 100.0, 2, FilterTypes.BUTTERWORTH, 0)
-            # 60 Hz Notch filter
-            center_freq = 60.0
-            bandwidth = 4.0
-            start_freq = center_freq - (bandwidth / 2.0)
-            stop_freq = center_freq + (bandwidth / 2.0)
-            DataFilter.perform_bandstop(eeg_data, sampling_rate, start_freq, stop_freq, 3, FilterTypes.BUTTERWORTH, 0)
+            
+          
 
+            #1 Detrend to get dc offset away
+            DataFilter.detrend(eeg_data, DetrendOperations.CONSTANT.value)
+            # 2. Apply a STABLE 4nd-order low-pass 100hz. This is crucial for real-time processing.
+            DataFilter.perform_lowpass(eeg_data, sampling_rate, 100.0, 4, FilterTypes.BUTTERWORTH, 0)
+            
+            # 3. Apply the band-stop (notch) filter for 50, 60 Hz noise.
+            DataFilter.perform_bandstop(eeg_data, sampling_rate, 48, 52, 3, FilterTypes.BUTTERWORTH, 0)
+            DataFilter.perform_bandstop(eeg_data, sampling_rate, 58, 62, 3, FilterTypes.BUTTERWORTH, 0)
+            
+            #4 High Pass above 0.5 Hz
+            DataFilter.perform_highpass(eeg_data, sampling_rate, 0.5, 4, FilterTypes.BUTTERWORTH, 0)
+            
+            #5. More cleaning data up
+            #DataFilter.perform_rolling_filter(eeg_plot_data[i], 3, AggOperations.MEAN.value)
+            DataFilter.perform_rolling_filter(eeg_data, 3, AggOperations.MEDIAN.value)
+
+            
+            
+
+            
         # 3. Perform FFT and calculate PSD (logic from original pong game)
         y_data = eeg_data - np.mean(eeg_data)
         N = len(y_data)
