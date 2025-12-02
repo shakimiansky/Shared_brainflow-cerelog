@@ -124,7 +124,7 @@ def update_plot(frame, lines, axes):
                 
                 #5. More cleaning data up
                 #DataFilter.perform_rolling_filter(eeg_plot_data[i], 3, AggOperations.MEAN.value)
-                DataFilter.perform_rolling_filter(eeg_plot_data[i], 3, AggOperations.MEDIAN.value)
+                ####DataFilter.perform_rolling_filter(eeg_plot_data[i], 3, AggOperations.MEDIAN.value)
                 # (This is redundant notch) DataFilter.remove_environmental_noise(eeg_plot_data[i], sampling_rate, NoiseTypes.FIFTY_AND_SIXTY.value)
                 #DataFilter.perform_wavelet_denoising(eeg_plot_data[i], WaveletTypes.BIOR3_9, 3,
                                                 # WaveletDenoisingTypes.SURESHRINK, ThresholdTypes.HARD,
