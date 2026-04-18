@@ -48,90 +48,120 @@ def send_handshake_packet(ser, reg_addr=0x01, reg_val=0x05):
         print(f"[ERROR] Failed to send complete packet. Sent {result}/12 bytes")
         return False
     
-    ser.flush()  # Ensure packet is sent
+    print(f"[INFO] Skipping flush (can hang on Windows)...")
     print(f"[SUCCESS] Sent {result} bytes")
-    
+
     return True
 
 def test_handshake():
-    """Test the handshake process with the correct timing for macOS."""
-    
-    # Determine port and baud rates
-    if platform.system() == 'Darwin':  # macOS
-        port_name = '/dev/cu.usbserial-110' # IMPORTANT: Make sure this is your actual port name
+    """Test the handshake process."""
+
+    # Determine port
+    if platform.system() == 'Darwin':
+        port_name = '/dev/cu.usbserial-110'
     elif platform.system() == 'Windows':
-        port_name = 'COM4' # IMPORTANT: Make sure this is your actual port name
+        port_name = 'COM3'
     else:
         port_name = '/dev/ttyUSB0'
 
-    initial_baud = 9600
-    target_baud = 115200 # NOTE: The original test had a typo (115000). Use the standard 115200.
-    
-    # This should match the baud_config_val sent in the handshake
-    # 0x04 = 115200, 0x05 = 230400
-    baud_config_val_to_send = 0x04 
-
-    print(f"[TEST] Manual Handshake Test (macOS Corrected)")
-    print(f"[INFO] Port: {port_name}, Initial Baud: {initial_baud}, Target Baud: {target_baud}")
+    print(f"[TEST] Cerelog Handshake + Raw Listener Test")
     print("-" * 50)
-    
+
+    # ── Step 0: Listen for raw data at common baud rates BEFORE handshake ──
+    # This tells us if the board is alive and what baud rate it's already at.
+    for baud in [9600, 115200, 230400, 921600]:
+        print(f"\n[STEP 0] Listening at {baud} baud for 3 seconds...")
+        try:
+            ser = serial.Serial(port_name, baud, timeout=1.0)
+            time.sleep(3)  # wait for board boot + any data
+            data_count = 0
+            for _ in range(5):
+                waiting = ser.in_waiting
+                if waiting > 0:
+                    data = ser.read(waiting)
+                    data_count += len(data)
+                    print(f"  [DATA @ {baud}] Got {len(data)} bytes: {data[:30].hex()}")
+                time.sleep(0.5)
+            ser.close()
+            if data_count > 0:
+                print(f"  [FOUND] Board is sending data at {baud} baud! ({data_count} bytes)")
+            else:
+                print(f"  [SILENT] No data at {baud} baud.")
+        except serial.SerialException as e:
+            print(f"  [ERROR] {e}")
+            try:
+                ser.close()
+            except Exception:
+                pass
+
+    # ── Step 1: Try the handshake at 9600 → 115200 ──
+    initial_baud = 9600
+    target_baud = 115200
+    baud_config_val_to_send = 0x04
+
+    print(f"\n{'=' * 50}")
+    print(f"[STEP 1] Handshake: {initial_baud} -> {target_baud}")
+    print(f"{'=' * 50}")
+
     ser = None
     try:
-        # Step 1: Connect and WAIT for the board to boot
-        print(f"[STEP 1] Connecting at {initial_baud} baud...")
-        ser = serial.Serial(port_name, initial_baud, timeout=1.0)
-        
-        # <<< FIX #1: THE CRITICAL 5-SECOND BOOT WAIT >>>
-        # Opening the port resets the board. We MUST wait for it to be ready.
-        print("[INFO] Port opened. Waiting 5 seconds for board to boot...")
+        print(f"  Connecting at {initial_baud} baud...")
+        ser = serial.Serial(port_name, initial_baud, timeout=1.0,
+                            write_timeout=5.0)  # 5s write timeout to prevent hang
+
+        print("  Waiting 5 seconds for board boot...")
         time.sleep(5)
-        print(f"[SUCCESS] Connected to {ser.name}")
-        
-        # Step 2: Send handshake packet
-        print(f"\n[STEP 2] Sending handshake packet...")
+
+        # Check if anything arrived during boot
+        if ser.in_waiting > 0:
+            boot_data = ser.read(ser.in_waiting)
+            print(f"  [BOOT DATA] Got {len(boot_data)} bytes: {boot_data[:30].hex()}")
+        else:
+            print("  [BOOT DATA] Nothing received during boot wait.")
+
+        print(f"  Sending handshake packet...")
         if not send_handshake_packet(ser, reg_addr=0x01, reg_val=baud_config_val_to_send):
             ser.close()
             return False
-        
-        # <<< FIX #2: THE CRITICAL DEVICE RECONFIGURATION WAIT >>>
-        # We must give the board time to process the command and switch its baud rate.
-        print("[INFO] Handshake sent. Waiting 2 seconds for device to reconfigure...")
+
+        print("  Waiting 2 seconds for device to reconfigure...")
         time.sleep(2)
-        
-        # Step 3: Switch host to target baud rate using the "close and re-open" method
-        print(f"\n[STEP 3] Switching host to {target_baud} baud...")
+
+        # Step 2: Switch to target baud
+        print(f"\n[STEP 2] Switching to {target_baud} baud...")
         ser.close()
-        time.sleep(0.2) # Brief pause for OS to release the port
-        
+        time.sleep(0.2)
+
         ser = serial.Serial(port_name, target_baud, timeout=1.0)
         ser.reset_input_buffer()
-        print("[SUCCESS] Host reconnected at new baud rate.")
-        
-        # Step 4: Check for data at the new baud rate
-        print(f"\n[STEP 4] Checking for data at {target_baud} baud for 3 seconds...")
+        print("  Reconnected at new baud rate.")
+
+        # Step 3: Check for data
+        print(f"\n[STEP 3] Checking for data at {target_baud} baud for 5 seconds...")
         data_count = 0
         start_time = time.time()
-        
-        while time.time() - start_time < 3:
+
+        while time.time() - start_time < 5:
             if ser.in_waiting > 0:
                 data = ser.read(ser.in_waiting)
                 data_count += len(data)
-                # Only print the first chunk of data to avoid spamming the console
                 if data_count == len(data):
-                    print(f"[DATA] Received first chunk of {len(data)} bytes: {data[:20].hex()}...")
-            time.sleep(0.01) # Small sleep to prevent busy-waiting
-        
+                    print(f"  [DATA] First chunk: {len(data)} bytes: {data[:30].hex()}...")
+            time.sleep(0.01)
+
         if data_count > 0:
-            print(f"\n[SUCCESS] Received a total of {data_count} bytes at {target_baud} baud!")
-            print(f"[SUCCESS] Handshake and baud rate switching worked!")
+            print(f"\n[SUCCESS] Got {data_count} bytes at {target_baud} baud!")
         else:
             print(f"\n[ERROR] No data received at {target_baud} baud.")
-            print(f"[INFO] This indicates the handshake failed.")
-        
+            print(f"[INFO] The board may need firmware flashed, or it uses a different protocol.")
+
         return data_count > 0
-        
+
     except serial.SerialException as e:
         print(f"[ERROR] Serial error: {e}")
+        return False
+    except serial.SerialTimeoutException:
+        print(f"[ERROR] Write timed out — board is not accepting data.")
         return False
     finally:
         if ser and ser.is_open:

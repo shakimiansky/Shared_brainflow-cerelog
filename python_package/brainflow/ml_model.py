@@ -7,7 +7,10 @@ import struct
 from typing import List
 
 import numpy
-import pkg_resources
+try:
+    import pkg_resources
+except ImportError:
+    pkg_resources = None
 from brainflow.board_shim import BrainFlowError, LogLevels
 from brainflow.exit_codes import BrainFlowExitCodes
 from numpy.ctypeslib import ndpointer
@@ -78,7 +81,10 @@ class MLModuleDLL(object):
             dll_path = 'lib/libMLModule.dylib'
         else:
             dll_path = 'lib/libMLModule.so'
-        full_path = pkg_resources.resource_filename(__name__, dll_path)
+        if pkg_resources is not None:
+            full_path = pkg_resources.resource_filename(__name__, dll_path)
+        else:
+            full_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), dll_path)
         if os.path.isfile(full_path):
             # for python we load dll by direct path but this dll may depend on other dlls and they will not be found!
             # to solve it we can load all of them before loading the main one or change PATH\LD_LIBRARY_PATH env var.
