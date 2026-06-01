@@ -125,8 +125,8 @@ def update_plot(frame, lines, axes):
         
         timestamps = plot_data[timestamp_channel]
         
-        # Correct the timestamp from kiloseconds to seconds
-        relative_time_vector = (timestamps - start_time) * 1000.0
+        # Time stamp is in seconds. The firmware on board sends time in ms and brainflow behind the scenes already converts it to seconds and unix formats it outside this script. No need to multiply by 1000
+        relative_time_vector = (timestamps - start_time) 
         
         # Update each subplot
         for i, (line, ax) in enumerate(zip(lines, axes)):
