@@ -22,6 +22,9 @@ public:
     int set_serial_port_settings (int ms_timeout = 1000, bool timeout_only = false);
     int set_custom_baudrate (int baudrate);
     int set_custom_latency (int latency = 1);
+    // controls the DTR/RTS modem lines, needed by boards which use them as a reset strobe
+    // (e.g. ESP32-S3 native USB CDC), not part of the abstract Serial interface
+    int set_control_lines (bool dtr, bool rts);
     int flush_buffer ();
     int read_from_serial_port (void *bytes_to_read, int size);
     int send_to_serial_port (const void *message, int length);

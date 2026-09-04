@@ -73,6 +73,23 @@ int OSSerial::set_serial_port_settings (int ms_timeout, bool timeout_only)
     return SerialExitCodes::OK;
 }
 
+int OSSerial::set_control_lines (bool dtr, bool rts)
+{
+    if (!this->is_port_open ())
+    {
+        return SerialExitCodes::SET_PORT_STATE_ERROR;
+    }
+    if (!EscapeCommFunction (this->port_descriptor, dtr ? SETDTR : CLRDTR))
+    {
+        return SerialExitCodes::SET_PORT_STATE_ERROR;
+    }
+    if (!EscapeCommFunction (this->port_descriptor, rts ? SETRTS : CLRRTS))
+    {
+        return SerialExitCodes::SET_PORT_STATE_ERROR;
+    }
+    return SerialExitCodes::OK;
+}
+
 int OSSerial::flush_buffer ()
 {
     PurgeComm (this->port_descriptor, PURGE_TXCLEAR | PURGE_RXCLEAR);
@@ -116,6 +133,7 @@ int OSSerial::close_serial_port ()
 #else
 
 #include <fcntl.h>
+#include <sys/ioctl.h>
 #include <termios.h>
 #include <unistd.h>
 
@@ -180,6 +198,41 @@ int OSSerial::read_from_serial_port (void *bytes_to_read, int size)
         return 0;
     }
     return res;
+}
+
+int OSSerial::set_control_lines (bool dtr, bool rts)
+{
+    if (!this->is_port_open ())
+    {
+        return SerialExitCodes::SET_PORT_STATE_ERROR;
+    }
+    int set_bits = 0;
+    int clear_bits = 0;
+    if (dtr)
+    {
+        set_bits |= TIOCM_DTR;
+    }
+    else
+    {
+        clear_bits |= TIOCM_DTR;
+    }
+    if (rts)
+    {
+        set_bits |= TIOCM_RTS;
+    }
+    else
+    {
+        clear_bits |= TIOCM_RTS;
+    }
+    if ((set_bits != 0) && (ioctl (this->port_descriptor, TIOCMBIS, &set_bits) < 0))
+    {
+        return SerialExitCodes::SET_PORT_STATE_ERROR;
+    }
+    if ((clear_bits != 0) && (ioctl (this->port_descriptor, TIOCMBIC, &clear_bits) < 0))
+    {
+        return SerialExitCodes::SET_PORT_STATE_ERROR;
+    }
+    return SerialExitCodes::OK;
 }
 
 int OSSerial::flush_buffer ()
